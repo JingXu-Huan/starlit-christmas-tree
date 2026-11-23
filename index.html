@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#070a12"><title>星光圣诞树 · Noël Atelier</title><link rel="stylesheet" href="./style.css"></head>
+<body>
+<main><section class="scene" id="scene" aria-label="交互式粒子圣诞树">
+<canvas id="landscape" aria-hidden="true"></canvas>
+<div class="tree-space"><canvas id="tree" aria-label="粒子圣诞树，左右拖动旋转，也可以使用左右方向键" tabindex="0"></canvas></div>
+<header><div class="masthead"><span class="edition">NOËL ATELIER</span><h1 lang="en">A Christmas <em>Wish</em></h1><p>星光圣诞树 · 手势相册</p></div><nav><button class="guide-btn" id="guideBtn" aria-label="手势指南"><i data-icon="book"></i><span>手势指南</span></button><button class="camera" id="camera"><i data-icon="camera"></i><span>开启摄像头</span></button></nav></header>
+<div class="gestures"><h2><span class="status-dot"></span><span id="status">手势控制未开启</span></h2><div><i data-icon="pinch"></i><span>双次捏合</span><small>放大 / 切换照片</small></div><div><i data-icon="fist"></i><span>轻握拳头</span><small>收起照片</small></div><div><i data-icon="hand"></i><span>张掌移动</span><small>左右旋转</small></div></div>
+<div class="scene-end"><span class="drag"><i data-icon="drag"></i> 拖动旋转</span><button id="full" class="round" aria-label="进入全屏" title="全屏"><i data-icon="full"></i></button></div>
+
+</section>
+<section class="gallery"><div class="gallery-top"><div class="gallery-title"><span class="album-icon"><i data-icon="album"></i></span><h2>树上相册</h2><span class="count" id="count">4 张照片</span></div><button class="upload" id="upload"><i data-icon="plus"></i>上传照片</button><input id="files" type="file" accept="image/*" multiple hidden></div>
+<div class="film" id="film"></div></section></main>
+<dialog id="guide"><div class="dialog-head"><h2>手势指南</h2><button class="icon-button" aria-label="关闭" data-close="guide"><i data-icon="close"></i></button></div><p>开启摄像头，让一只手完整出现在画面中。</p><ul class="instructions"><li><i data-icon="pinch"></i><div><b>双次捏合</b><p>拇指和食指快速碰两次，中间分开。首次放大，再做一次切到下一张。</p></div></li><li><i data-icon="fist"></i><div><b>握拳收起</b><p>握住拳头片刻，回到圣诞树。</p></div></li><li><i data-icon="hand"></i><div><b>张掌旋转</b><p>伸开手指，手掌向左或向右移动，带动树和粒子旋转。</p></div></li></ul><p class="note">也可以直接拖动圣诞树，点击照片查看。</p></dialog>
+<dialog id="viewer"><div class="dialog-head"><span id="photoIndex"></span><button class="icon-button" data-close="viewer" aria-label="收起照片"><i data-icon="close"></i></button></div><img id="large" alt=""><div class="photo-foot"><button class="icon-button" id="prev" aria-label="上一张"><i data-icon="left"></i></button><h2 id="photoName"></h2><button class="icon-button" id="next" aria-label="下一张"><i data-icon="right"></i></button></div></dialog>
+<div id="toast" role="status"></div><script type="module" src="./app.js"></script></body></html>
