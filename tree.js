@@ -100,14 +100,18 @@ function makeCloud() {
     const x = (random()-.5)*1.94, y = random()*1.28-.16, z = (random()-.5)*1.1;
     add(x,y,z,.0008+random()**3*.0044,[.67+random()*.29,.77+random()*.21,1], .15+random()*.39,3);
   }
-  // A short trunk grounds the cone: without it the tree floats.
-  for (let i=0; i<520; i++) {
-    const y=1.005+random()*.115, a=random()*TAU;
-    const r=(.052-.012*(y-1.005)/.115)*(.9+spread()*.18);
-    const warm=random()<.3;
-    add(Math.cos(a)*r, y, Math.sin(a)*r, .001+random()**2*.0026,
-      warm?[.72,.5,.26]:[.42+random()*.14,.3+random()*.08,.17+random()*.05],
-      .34+random()*.4);
+  // A thick, bright trunk grounds the cone: it starts tucked under the
+  // lowest branch layer and reaches below the ground glow, so it stays
+  // visible from the front and while the tree turns instead of being
+  // washed out by the glow at the base.
+  for (let i=0; i<980; i++) {
+    const y=.985+random()*.175, a=random()*TAU;
+    const f=(y-.985)/.175;
+    const r=(.086-.024*f)*(.88+spread()*.16);
+    const warm=random()<.45;
+    add(Math.cos(a)*r, y, Math.sin(a)*r, .0016+random()**2*.0028,
+      warm?[.88,.6,.3]:[.58+random()*.14,.4+random()*.09,.22+random()*.06],
+      .58+random()*.38);
   }
   // A dense garland ring marks the lowest branch layer so the base reads clearly.
   for (let i=0; i<760; i++) {
@@ -438,9 +442,15 @@ export function createTree(canvas,{onSelect}={}) {
       const b=hits[i]; if(Math.abs(b.x-x)<b.w*.56+3 && Math.abs(b.y-y)<b.h*.56+3) return b;
     }
   }
+  // A press counts as a tap only if the pointer stays within a small radius
+  // of where it went down; anything further is a drag that rotates the tree.
+  // The release-time distance decides, so a press that wobbles a little and
+  // returns still opens the photo instead of being swallowed as a drag, and
+  // no rotation is applied until the drag threshold is actually crossed.
+  const CLICK_TOLERANCE=6;
   function down(e) {
     if(drag || e.button!==0) return;
-    canvas.setPointerCapture(e.pointerId);drag={id:e.pointerId,x:e.clientX,y:e.clientY,lastX:e.clientX,moved:false};
+    canvas.setPointerCapture(e.pointerId);drag={id:e.pointerId,x:e.clientX,y:e.clientY,lastX:e.clientX,dragging:false};
   }
   function move(e) {
     const bounds=canvas.getBoundingClientRect();
@@ -451,13 +461,16 @@ export function createTree(canvas,{onSelect}={}) {
       return;
     }
     if(e.pointerId!==drag.id) return;
-    if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>4) drag.moved=true;
-    if(drag.moved) {rotate((e.clientX-drag.lastX)*3.3/Math.max(160,view.s));canvas.style.cursor='grabbing';}
+    if(!drag.dragging) {
+      if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>CLICK_TOLERANCE){drag.dragging=true;drag.lastX=e.clientX;canvas.style.cursor='grabbing';}
+      return;
+    }
+    rotate((e.clientX-drag.lastX)*3.3/Math.max(160,view.s));
     drag.lastX=e.clientX;
   }
   function up(e) {
     if(!drag || e.pointerId!==drag.id) return;
-    if(!drag.moved && e.type==='pointerup') {
+    if(e.type==='pointerup' && Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<=CLICK_TOLERANCE) {
       const bounds=canvas.getBoundingClientRect(), photo=hit(e.clientX-bounds.left,e.clientY-bounds.top);
       if(photo) onSelect?.(photo.index, {x: bounds.left + photo.x, y: bounds.top + photo.y});
     }
