@@ -25,12 +25,21 @@ function smoothLandmarks(previous, current, alpha) {
   }));
 }
 
-export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onStatus, onFrame }) {
+export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onStatus, onFrame, onPose }) {
   let lastStatus;
   let lastSeen = -Infinity;
   let firstPinch, candidateSince, fistSince, palmX, lastPalmX;
   let pinched, fistFired, cooldownUntil;
   let smoothImage = null, smoothWorld = null, absentSent = false;
+  // Definitive hand pose, emitted only on change: 'fist' | 'palm' | 'idle' | 'absent'.
+  // Transient frames do not emit, so the tree does not flicker between
+  // gathered and expanded while the hand is moving between poses.
+  let pose = 'absent';
+  function emitPose(next) {
+    if (next === pose) return;
+    pose = next;
+    onPose?.(next);
+  }
   function reset() {
     firstPinch = candidateSince = fistSince = palmX = lastPalmX = null;
     pinched = fistFired = false;
@@ -49,6 +58,7 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
       if (now - lastSeen > 220) {
         reset();
         status('等待手掌进入画面');
+        emitPose('absent');
         if (!absentSent) { absentSent = true; onFrame?.({present: false}); }
       }
       return;
@@ -87,6 +97,8 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
     if (fist) {
       palmX = lastPalmX = candidateSince = null;
       fistSince ??= now;
+      // Same hold as the fist action: a passing folded hand does not gather.
+      if (now - fistSince >= 150) emitPose('fist');
       if (now - fistSince >= 150 && !fistFired) {
         firstPinch = null;
         pinched = true;
@@ -137,6 +149,7 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
     // Three extended fingers are enough for a palm: requiring all four
     // dropped rotation whenever the little finger curled slightly.
     if (extended.filter(Boolean).length >= 3 && !pinched && pinchGap > 0.50) {
+      emitPose('palm');
       // A front-facing camera shows mirrored movement to the person using it.
       const x = 1 - (smoothImage[0].x + smoothImage[9].x + smoothImage[5].x + smoothImage[17].x) / 4;
       palmX = palmX === null ? x : palmX + (x - palmX) * 0.55;
@@ -149,6 +162,7 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
       status('已张掌 · 左右移动');
     } else {
       palmX = lastPalmX = null;
+      emitPose('idle');
       status('手部已就绪');
     }
   };

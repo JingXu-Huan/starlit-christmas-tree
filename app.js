@@ -1,6 +1,7 @@
 import {createTree} from './tree.js';
 import {drawLandscape} from './landscape.js';
 import {createGestures} from './gestures.js';
+import {createMusic} from './music.js';
 const shapes={
   book:'M3 4.5c3-1 6-.7 9 1 3-1.7 6-2 9-1v14c-3-1-6-.7-9 1-3-1.7-6-2-9-1z M12 5.5v14',
   camera:'M3 7h4l2-3h6l2 3h4v13H3z M15.5 13a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0',
@@ -9,6 +10,7 @@ const shapes={
   hand:'M7 13V6.5c0-1.9 2.8-1.9 2.8 0V11 4c0-2 3-2 3 0v7-6c0-1.9 3-1.9 3 0v6-4c0-1.9 2.9-1.9 2.9 0v7c0 4.4-2.2 7.2-6 7.2-2.3 0-3.7-.8-5.2-2.7L3 13c-1.2-1.7.7-3.3 2.1-2z',
   drag:'M3 12h18 M7 8l-4 4 4 4 M17 8l4 4-4 4',full:'M9 4H4v5 M15 4h5v5 M20 15v5h-5 M4 15v5h5',
   album:'M6 6h15v14H6z M3 16V3h14 M7 17l4-5 3 3 3-4 4 6 M10 10h.1',
+  music:'M9 18V5l10-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M19 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
   plus:'M12 5v14 M5 12h14',close:'M5 5l14 14 M19 5 5 19',left:'M15 5l-7 7 7 7',right:'M9 5l7 7-7 7'
 };
 for(const icon of document.querySelectorAll('[data-icon]')){
@@ -75,6 +77,8 @@ function showPhoto(index,origin=null,direction=0){
   el('photoIndex').textContent=(index+1)+' / '+photos.length;
   viewerStrip();
   if(opening){
+    // The tree behind the photo is the tree again, not a gathered ball.
+    tree.setGather(false);
     // A stale close animation must not fade out the freshly opened dialog.
     closeRun++;closingViewer=false;viewer.classList.remove('closing');
     viewer.getAnimations().forEach(animation=>animation.cancel());
@@ -189,12 +193,29 @@ let cameraRequest=0;
 function cameraState(on){cameraOn=on;el('handPreview').hidden=!on;el('camera').querySelector('span').textContent=on?'关闭摄像头':'开启摄像头';scene.classList.toggle('active',on)}
 const gestures=createGestures({
   onDoublePinch(){tree.pulse(1);if(!guide.open){if(viewer.open)cycle();else showPhoto(selected)}},
-  onFist(){tree.pulse(.6);if(viewer.open)closeViewer()},
+  onFist(){tree.pulse(.6);if(viewer.open){closeViewer();tree.setGather(true)}},
+  onPose(pose){
+    // Gathering only applies when no photo is open: a fist held while a
+    // photo is showing closes it (onFist, above), and an open palm while
+    // viewing must not expand the tree behind the dialog.
+    if(viewer.open||guide.open)return;
+    if(pose==='fist')tree.setGather(true);
+    else if(pose==='palm')tree.setGather(false);
+  },
   onRotate(delta){if(!viewer.open&&!guide.open)tree.rotate(delta)},
   onStatus(message){el('status').textContent=message},
   onFrame(frame){drawHandPreview(frame)},
   onError(error){cameraState(false);notify(error.message)}
 });
+const music=createMusic();
+function refreshMusicButton(playing){
+  const button=el('music');
+  button.classList.toggle('playing',playing);
+  button.setAttribute('aria-pressed',String(playing));
+  button.querySelector('span').textContent=playing?'音乐开':'音乐';
+  button.setAttribute('aria-label',playing?'关闭圣诞音乐':'播放圣诞音乐');
+}
+el('music').onclick=()=>{try{refreshMusicButton(music.toggle())}catch{notify('音乐无法播放，请在浏览器中允许音频后重试。')}};
 el('camera').onclick=async()=>{
   const request=++cameraRequest;
   if(cameraOn||el('camera').getAttribute('aria-busy')==='true'){
@@ -224,4 +245,4 @@ function fullLabel(on){el('full').setAttribute('aria-label',on?'退出全屏':'�
 function toggleExpanded(on){scene.classList.toggle('expanded',on);fullLabel(on)}
 el('full').onclick=async()=>{if(scene.classList.contains('expanded'))return toggleExpanded(false);if(document.fullscreenElement)return document.exitFullscreen();try{await scene.requestFullscreen()}catch{toggleExpanded(true)}};
 document.addEventListener('fullscreenchange',()=>fullLabel(!!document.fullscreenElement));
-window.addEventListener('pagehide',()=>{++cameraRequest;gestures.stop();el('camera').removeAttribute('aria-busy');cameraState(false)});
+window.addEventListener('pagehide',()=>{++cameraRequest;gestures.stop();music.stop();refreshMusicButton(false);el('camera').removeAttribute('aria-busy');cameraState(false)});
