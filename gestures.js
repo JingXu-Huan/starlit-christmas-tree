@@ -7,19 +7,35 @@ function fingerExtended(points, tip, scale) {
   const joint = points[tip - 2];
   const end = points[tip];
   const knuckle = points[tip - 3];
-  return length(end, points[0]) > length(joint, points[0]) + scale * 0.16
-    && length(end, knuckle) > length(joint, knuckle) * 1.45;
+  // Relaxed from 0.16/1.45: a hand turned sideways or slightly bent was
+  // previously read as folded, which broke palm rotation and fist detection.
+  return length(end, points[0]) > length(joint, points[0]) + scale * 0.12
+    && length(end, knuckle) > length(joint, knuckle) * 1.32;
 }
 
-export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onStatus }) {
+// Exponential smoothing over successive landmark sets. Raw MediaPipe
+// landmarks jitter frame to frame; smoothing them before classification
+// stops a single noisy frame from breaking a pinch or a palm.
+function smoothLandmarks(previous, current, alpha) {
+  if (!previous) return current.map(v => ({...v}));
+  return current.map((v, i) => ({
+    x: previous[i].x + (v.x - previous[i].x) * alpha,
+    y: previous[i].y + (v.y - previous[i].y) * alpha,
+    z: (previous[i].z ?? 0) + ((v.z ?? 0) - (previous[i].z ?? 0)) * alpha,
+  }));
+}
+
+export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onStatus, onFrame }) {
   let lastStatus;
   let lastSeen = -Infinity;
   let firstPinch, candidateSince, fistSince, palmX, lastPalmX;
   let pinched, fistFired, cooldownUntil;
+  let smoothImage = null, smoothWorld = null, absentSent = false;
   function reset() {
     firstPinch = candidateSince = fistSince = palmX = lastPalmX = null;
     pinched = fistFired = false;
     cooldownUntil = 0;
+    smoothImage = smoothWorld = null;
   }
   function status(value) {
     if (value === lastStatus) return;
@@ -33,22 +49,40 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
       if (now - lastSeen > 220) {
         reset();
         status('等待手掌进入画面');
+        if (!absentSent) { absentSent = true; onFrame?.({present: false}); }
       }
       return;
     }
+    absentSent = false;
     if (now - lastSeen > 220) reset();
     lastSeen = now;
     // World coordinates are metric and preserve proportions as the hand turns.
-    const p = result.worldLandmarks?.[0] ?? image.map(v => ({
+    const rawWorld = result.worldLandmarks?.[0] ?? image.map(v => ({
       x: v.x * aspect, y: v.y, z: (v.z ?? 0) * aspect
     }));
+    smoothImage = smoothLandmarks(smoothImage, image, .5);
+    smoothWorld = smoothLandmarks(smoothWorld, rawWorld, .5);
+    const p = smoothWorld;
     const scale = (length(p[0], p[9]) + length(p[5], p[17])) * 0.5;
     if (scale < 0.00001) return;
     const extended = [8, 12, 16, 20].map(tip => fingerExtended(p, tip, scale));
     const folded = [8, 12, 16, 20].map((tip, i) =>
-      !extended[i] && length(p[tip], p[0]) < length(p[tip - 2], p[0]) + scale * 0.06);
+      !extended[i] && length(p[tip], p[0]) < length(p[tip - 2], p[0]) + scale * 0.09);
     const fist = folded.every(Boolean);
-    const pinchGap = distanceRatio(p[4], p[8], scale);
+    // Pinch uses the raw landmarks, not the smoothed ones: smoothing lags
+    // a fast pinch by a frame or two and a quick double pinch was missed.
+    const rawScale = (length(rawWorld[0], rawWorld[9]) + length(rawWorld[5], rawWorld[17])) * 0.5;
+    const pinchGap = distanceRatio(rawWorld[4], rawWorld[8], rawScale);
+    // Live preview data: the UI draws the skeleton and the pinch meter from
+    // this, so the user can see whether the hand is actually being tracked.
+    onFrame?.({
+      present: true,
+      landmarks: smoothImage,
+      pinchGap, pinched, fist,
+      extendedCount: extended.filter(Boolean).length,
+      handScale: scale,
+      distance: scale < 0.055 ? 'far' : scale > 0.115 ? 'near' : 'ok',
+    });
 
     if (fist) {
       palmX = lastPalmX = candidateSince = null;
@@ -67,17 +101,19 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
 
     // Two distinct closing edges, separated by a genuine release. Different
     // closing and opening thresholds suppress tremor near fingertip contact.
-    if (firstPinch !== null && now - firstPinch > 1050) firstPinch = null;
+    // The window for the second pinch is 1.4s: a deliberately slow double
+    // pinch was previously expiring before the second close.
+    if (firstPinch !== null && now - firstPinch > 1400) firstPinch = null;
     const transition = pinched ? pinchGap > 0.53 : pinchGap < 0.31;
     if (transition) {
       candidateSince ??= now;
-      if (now - candidateSince >= 34) {
+      if (now - candidateSince >= 28) {
         candidateSince = null;
         pinched = !pinched;
         if (pinched && now >= cooldownUntil) {
-          if (firstPinch !== null && now - firstPinch >= 115) {
+          if (firstPinch !== null && now - firstPinch >= 90) {
             firstPinch = null;
-            cooldownUntil = now + 380;
+            cooldownUntil = now + 320;
             status('已识别双捏合');
             onDoublePinch?.();
           } else {
@@ -98,9 +134,11 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
       status('再捏合一次');
       return;
     }
-    if (extended.every(Boolean) && !pinched && pinchGap > 0.53) {
+    // Three extended fingers are enough for a palm: requiring all four
+    // dropped rotation whenever the little finger curled slightly.
+    if (extended.filter(Boolean).length >= 3 && !pinched && pinchGap > 0.50) {
       // A front-facing camera shows mirrored movement to the person using it.
-      const x = 1 - (image[0].x + image[9].x + image[5].x + image[17].x) / 4;
+      const x = 1 - (smoothImage[0].x + smoothImage[9].x + smoothImage[5].x + smoothImage[17].x) / 4;
       palmX = palmX === null ? x : palmX + (x - palmX) * 0.55;
       if (lastPalmX !== null && Math.abs(palmX - lastPalmX) > 0.0015) {
         const movement = Math.max(-0.11, Math.min(0.11, palmX - lastPalmX));
@@ -124,7 +162,10 @@ export async function loadHandDetector() {
   const options = {
     baseOptions: { modelAssetPath: new URL('hand_landmarker.task', baseURL).href, delegate: 'GPU' },
     runningMode: 'VIDEO', numHands: 1,
-    minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.6
+    // 0.5 instead of 0.6: hands further away or in dimmer light were being
+    // missed entirely. Temporal smoothing in the interpreter, not a high
+    // threshold, is what keeps the gestures stable.
+    minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5
   };
   try {
     return await HandLandmarker.createFromOptions(fileset, options);
@@ -222,7 +263,9 @@ export function createGestures(handlers = {}) {
       handlers.onStatus?.('正在开启摄像头');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } }
+        // 720p gives the landmarker more pixels for a hand held at arm's
+        // length; inference still runs in a worker, off the animation thread.
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
       });
       if (session !== current) {
         stream.getTracks().forEach(track => track.stop());

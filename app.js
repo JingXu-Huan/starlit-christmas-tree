@@ -20,31 +20,93 @@ const samples=[['village','雪夜小镇'],['cabin','林间小屋'],['forest','�
 let photos=[...samples], selected=0, cameraOn=false, timer;
 const viewer=el('viewer'),guide=el('guide'),scene=el('scene');
 function notify(message){el('toast').textContent=message;clearTimeout(timer);timer=setTimeout(()=>el('toast').textContent='',4500)}
-function showPhoto(index){
-  if(guide.open||index<0||index>=photos.length)return;
-  selected=index;
-  const p=photos[index];
-  el('large').src=p.src;el('large').alt=p.name;el('photoName').textContent=p.name;
-  el('photoIndex').textContent=(index+1)+' / '+photos.length;
-  if(!viewer.open)viewer.showModal();
-  if(!matchMedia('(prefers-reduced-motion: reduce)').matches){
-    const image=el('large');
-    image.getAnimations().forEach(animation=>animation.cancel());
-    image.animate([{opacity:.6,transform:'scale(.975)'},{opacity:1,transform:'scale(1)'}],{duration:230,easing:'ease-out'});
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let closingViewer=false;
+function closeViewer(){
+  if(!viewer.open||closingViewer)return;
+  if(reducedMotion){viewer.close();return}
+  closingViewer=true;
+  const animation=viewer.animate(
+    [{opacity:1,transform:'scale(1) translateY(0)'},{opacity:0,transform:'scale(.94) translateY(14px)'}],
+    {duration:240,easing:'cubic-bezier(.5,0,.75,.4)'});
+  animation.finished.then(()=>{closingViewer=false;if(viewer.open)viewer.close()}).catch(()=>{closingViewer=false;if(viewer.open)viewer.close()});
+}
+function sparkles(){
+  if(reducedMotion)return;
+  for(let i=0;i<14;i++){
+    const dot=document.createElement('i');
+    dot.className='sparkle';
+    const angle=Math.random()*Math.PI*2, distance=70+Math.random()*150;
+    dot.style.left='50%';dot.style.top='42%';
+    viewer.append(dot);
+    dot.animate([
+      {opacity:0,transform:'translate(-50%,-50%) scale(.4)'},
+      {opacity:1,transform:`translate(calc(-50% + ${Math.cos(angle)*distance*.35}px),calc(-50% + ${Math.sin(angle)*distance*.35}px)) scale(1)`,offset:.25},
+      {opacity:0,transform:`translate(calc(-50% + ${Math.cos(angle)*distance}px),calc(-50% + ${Math.sin(angle)*distance}px)) scale(.2)`}
+    ],{duration:650+Math.random()*300,easing:'cubic-bezier(.22,1,.36,1)'}).finished.then(()=>dot.remove()).catch(()=>dot.remove());
   }
 }
-function cycle(direction=1){showPhoto((selected+direction+photos.length)%photos.length)}
+function viewerStrip(){
+  const strip=el('viewerStrip');
+  strip.replaceChildren(...photos.map((p,i)=>{
+    const thumb=document.createElement('button');
+    thumb.className='strip-thumb'+(i===selected?' active':'');
+    thumb.setAttribute('aria-label',p.name);
+    const img=new Image();img.alt='';img.src=p.src;
+    thumb.append(img);
+    thumb.onclick=()=>showPhoto(i,null,i>selected?1:-1);
+    return thumb;
+  }));
+}
+function showPhoto(index,origin=null,direction=0){
+  if(guide.open||index<0||index>=photos.length)return;
+  const opening=!viewer.open;
+  const previous=selected;
+  selected=index;
+  const p=photos[index];
+  const image=el('large');
+  el('large').src=p.src;el('large').alt=p.name;el('photoName').textContent=p.name;
+  el('photoIndex').textContent=(index+1)+' / '+photos.length;
+  viewerStrip();
+  if(opening){
+    // Expand from the photo that was tapped: the dialog grows out of it.
+    if(origin&&!reducedMotion){
+      const rect=viewer.getBoundingClientRect();
+      const cx=origin.x??(origin.left+origin.width/2), cy=origin.y??(origin.top+origin.height/2);
+      viewer.style.transformOrigin=`${cx-rect.left}px ${cy-rect.top}px`;
+    }else viewer.style.transformOrigin='50% 50%';
+    viewer.showModal();
+    if(!reducedMotion){
+      image.getAnimations().forEach(animation=>animation.cancel());
+      image.animate([
+        {opacity:0,transform:'scale(1.14)',filter:'blur(10px)'},
+        {opacity:1,transform:'scale(1)',filter:'blur(0)'}
+      ],{duration:520,easing:'cubic-bezier(.22,1,.36,1)'});
+      sparkles();
+    }
+  }else if(!reducedMotion){
+    // Switching photos slides sideways in the direction of travel.
+    const dir=direction||(index>previous?1:-1);
+    image.getAnimations().forEach(animation=>animation.cancel());
+    image.animate([
+      {opacity:0,transform:`translateX(${dir*46}px) scale(.985)`,filter:'blur(4px)'},
+      {opacity:1,transform:'translateX(0) scale(1)',filter:'blur(0)'}
+    ],{duration:380,easing:'cubic-bezier(.22,1,.36,1)'});
+  }
+}
+function cycle(direction=1){showPhoto((selected+direction+photos.length)%photos.length,null,direction)}
 el('prev').onclick=()=>cycle(-1);el('next').onclick=()=>cycle();
 el('guideBtn').onclick=()=>guide.showModal();
-for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>el(button.dataset.close).close();
-for(const dialog of [viewer,guide])dialog.addEventListener('click',e=>{if(e.target!==dialog)return;const box=dialog.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)dialog.close()});
+for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>{if(button.dataset.close==='viewer')closeViewer();else el(button.dataset.close).close()};
+viewer.addEventListener('cancel',e=>{e.preventDefault();closeViewer()});
+for(const dialog of [viewer,guide])dialog.addEventListener('click',e=>{if(e.target!==dialog)return;const box=dialog.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom){if(dialog===viewer)closeViewer();else dialog.close()}});
 drawLandscape(el('landscape'));
 const tree=createTree(el('tree'),{onSelect:showPhoto});
 function gallery(){
   const fragment=document.createDocumentFragment();
   photos.forEach((p,i)=>{
     const tile=document.createElement('button'),img=new Image(),caption=document.createElement('span');
-    tile.className='tile';tile.onclick=()=>showPhoto(i);img.alt='';img.src=p.src;caption.textContent=p.name;
+    tile.className='tile';tile.onclick=()=>{const r=tile.getBoundingClientRect();showPhoto(i,{x:r.left+r.width/2,y:r.top+r.height/2})};img.alt='';img.src=p.src;caption.textContent=p.name;
     tile.append(img,caption);fragment.append(tile);
   });
   el('film').replaceChildren(fragment);el('count').textContent=photos.length+' 张照片';tree.setPhotos(photos);
@@ -88,13 +150,40 @@ el('files').onchange=async()=>{
   }else notify('照片读取失败，请选择浏览器支持的图片。');
   el('upload').disabled=false;
 };
+const HAND_LINKS=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawHandPreview(frame){
+  const preview=el('handPreview'), canvas=el('handCanvas'), ctx=canvas.getContext('2d');
+  if(!cameraOn||preview.hidden)return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!frame?.present||!frame.landmarks){
+    el('handHint').textContent='等待手掌';el('pinchMeter').style.width='0%';
+    return;
+  }
+  const W=canvas.width,H=canvas.height;
+  const point=i=>[(1-frame.landmarks[i].x)*W,frame.landmarks[i].y*H];
+  ctx.lineWidth=2;ctx.strokeStyle='rgba(221,195,144,.9)';
+  for(const [a,b] of HAND_LINKS){const [x1,y1]=point(a),[x2,y2]=point(b);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke()}
+  for(let i=0;i<frame.landmarks.length;i++){
+    const [x,y]=point(i);
+    ctx.fillStyle=i===4||i===8?'#ffd98a':'#eef3ff';
+    ctx.beginPath();ctx.arc(x,y,i===0?5:3.4,0,Math.PI*2);ctx.fill();
+  }
+  // Pinch line between thumb tip and index tip, gold while pinched.
+  const [tx,ty]=point(4),[ix,iy]=point(8);
+  ctx.strokeStyle=frame.pinchGap<0.31?'#ffd98a':'rgba(255,255,255,.75)';ctx.lineWidth=2.5;ctx.setLineDash([4,3]);
+  ctx.beginPath();ctx.moveTo(tx,ty);ctx.lineTo(ix,iy);ctx.stroke();ctx.setLineDash([]);
+  const meter=Math.max(0,Math.min(100,(0.68-frame.pinchGap)/0.37*100));
+  el('pinchMeter').style.width=meter+'%';
+  el('handHint').textContent=frame.distance==='far'?'手靠近一点':frame.distance==='near'?'手远一点':frame.fist?'已握拳':frame.pinchGap<0.31?'捏合中…':'已识别手掌';
+}
 let cameraRequest=0;
-function cameraState(on){cameraOn=on;el('camera').querySelector('span').textContent=on?'关闭摄像头':'开启摄像头';scene.classList.toggle('active',on)}
+function cameraState(on){cameraOn=on;el('handPreview').hidden=!on;el('camera').querySelector('span').textContent=on?'关闭摄像头':'开启摄像头';scene.classList.toggle('active',on)}
 const gestures=createGestures({
-  onDoublePinch(){if(!guide.open){if(viewer.open)cycle();else showPhoto(selected)}},
-  onFist(){if(viewer.open)viewer.close()},
+  onDoublePinch(){tree.pulse(1);if(!guide.open){if(viewer.open)cycle();else showPhoto(selected)}},
+  onFist(){tree.pulse(.6);if(viewer.open)closeViewer()},
   onRotate(delta){if(!viewer.open&&!guide.open)tree.rotate(delta)},
   onStatus(message){el('status').textContent=message},
+  onFrame(frame){drawHandPreview(frame)},
   onError(error){cameraState(false);notify(error.message)}
 });
 el('camera').onclick=async()=>{

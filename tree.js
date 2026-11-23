@@ -31,6 +31,9 @@ function makeCloud() {
   }
   // Six helical ribbons, thirteen latitude rings, and a sparse interior give the cone its depth.
   // Broad ribbons are built out of separate points and remain readable as they turn.
+  // About 7% of the tree points are warm gold, so the ice-blue cone has a
+  // contrasting sparkle instead of one flat colour.
+  const gold = () => [1, .68 + random() * .18, .34 + random() * .14];
   for (let i=0; i<19040; i++) {
     const strand=i%6;
     const y=Math.pow(random(),0.69);
@@ -40,7 +43,8 @@ function makeCloud() {
     const bright=random()<.08;
     const tint=bright ? .24+random()*.25 : spread()*.085;
     const size=bright ? .0029+random()*.0020 : .0008+random()**1.65*.0026;
-    place(yy,r,a,size,colorAt(y,tint),bright ? .94 : .29+random()*.50);
+    const isGold=random()<.07;
+    place(yy,r,a,isGold?size*1.35:size,isGold?gold():colorAt(y,tint),isGold?.92:bright ? .94 : .29+random()*.50);
   }
   for (let i=0; i<6160; i++) {
     const ring=i%13;
@@ -48,7 +52,8 @@ function makeCloud() {
     const r=radiusAt(y)*(.96+spread()*.125);
     const yy=y+spread()*(.003+.009*y)+.008*Math.sin(a*3+ring);
     const bright=random()<.08;
-    place(yy,r,a,bright?.0045:.001+random()**2*.0024,colorAt(y,.07+random()*.22),bright?.88:.28+random()*.44);
+    const isGold=random()<.07;
+    place(yy,r,a,bright?.0045:.001+random()**2*.0024,isGold?gold():colorAt(y,.07+random()*.22),isGold?.9:bright?.88:.28+random()*.44);
   }
   for(let i=0; i<2800; i++) {
     const y=Math.pow(random(),.67),a=random()*TAU;
@@ -100,6 +105,8 @@ uniform vec2 uRotation;
 uniform float uScale;
 uniform float uRatio;
 uniform float uTime;
+uniform float uPulse;
+uniform float uIntro;
 varying vec3 vColor;
 varying float vBrightness;
 void main() {
@@ -108,8 +115,12 @@ void main() {
   float x = p.x*c + p.z*s;
   float z = p.z*c - p.x*s;
   float y=p.y+z*0.157;
-  float shimmer=0.85+0.15*sin(uTime*(0.86+0.12*aPhase)+aPhase*3.3);
-  float brightness = aBrightness;
+  // Entrance: the cloud rises a little and fades in over the first moment.
+  y += (1.0-uIntro)*0.22*(0.5+0.5*sin(aPhase*3.0));
+  // Twinkle is stronger than a gentle shimmer, and bright points flare.
+  float shimmer=0.72+0.28*sin(uTime*(0.86+0.12*aPhase)+aPhase*3.3);
+  shimmer += 0.22*pow(0.5+0.5*sin(uTime*2.1+aPhase*5.0),3.0)*step(0.72,aBrightness);
+  float brightness = aBrightness * (0.25+0.75*uIntro) * (1.0+uPulse*0.9);
   float crown = aKind<0.5 ? 1.0-smoothstep(0.12,0.58,p.y) : 0.0;
   if (aKind < 0.5) {
     x += 0.0013*sin(1.15*uTime+aPhase*4.0);
@@ -126,13 +137,13 @@ void main() {
     y=mod(p.y+0.16+uTime*(0.009+aSize*1.7),1.28)-0.16;
     shimmer=0.69+0.31*sin(0.92*uTime+aPhase);
   } else if (aKind > 1.5) {
-    float beat=1.0+0.034*sin(1.8*uTime);
+    float beat=1.0+(0.034+0.05*uPulse)*sin(1.8*uTime);
     x=p.x*beat;
     y=-0.06+(p.y+0.06)*beat;
   }
   vec2 screen=(uOrigin+uScale*vec2(x,y))/uViewport;
   gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0.0,1.0);
-  gl_PointSize=max(1.7*uRatio,aSize*uScale*uRatio*(2.65+2.9*crown));
+  gl_PointSize=max(1.7*uRatio,aSize*uScale*uRatio*(2.65+2.9*crown)*(0.45+0.55*uIntro));
   vColor=mix(aColor,vec3(1.0),crown*0.78);
   vBrightness=brightness*shimmer*(1.0+0.87*crown);
 }`;
@@ -173,14 +184,15 @@ function createGPU(canvas, cloud) {
     const loc=gl.getAttribLocation(program,name);
     gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,components,gl.FLOAT,false,STRIDE*4,offset*4);
   }
-  const [viewport,origin,rotation,scale,ratio,time] = ['uViewport','uOrigin','uRotation','uScale','uRatio','uTime'].map(n=>gl.getUniformLocation(program,n));
+  const [viewport,origin,rotation,scale,ratio,time,pulse,intro] = ['uViewport','uOrigin','uRotation','uScale','uRatio','uTime','uPulse','uIntro'].map(n=>gl.getUniformLocation(program,n));
   gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.clearColor(0,0,0,0);
   return {
-    draw(view, sn, cs, t) {
+    draw(view, sn, cs, t, pulseValue, introValue) {
       gl.viewport(0,0,canvas.width,canvas.height); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform2f(viewport,view.w,view.h); gl.uniform2f(origin,view.x,view.y);
       gl.uniform2f(rotation,sn,cs); gl.uniform1f(scale,view.s); gl.uniform1f(ratio,view.dpr);
-      gl.uniform1f(time,t); gl.drawArrays(gl.POINTS,0,cloud.length/STRIDE);
+      gl.uniform1f(time,t); gl.uniform1f(pulse,pulseValue); gl.uniform1f(intro,introValue);
+      gl.drawArrays(gl.POINTS,0,cloud.length/STRIDE);
     },
     destroy() { gl.deleteBuffer(buffer); gl.deleteProgram(program); }
   };
@@ -205,12 +217,13 @@ function makeFallback(cloud) {
     const shade=kind===2?13+Math.floor(cloud[i+8]*.435):Math.min(12,Math.max(0,Math.round((cloud[i+4]-.26)/.74*12)));
     points.push({x:cloud[i],y:cloud[i+1],z:cloud[i+2],s:cloud[i+3],b:cloud[i+7],phase:cloud[i+8],kind,sprite:sprites[shade]});
   }
-  return (c,view,sn,cs,t)=>{
+  return (c,view,sn,cs,t,pulseValue=0,introValue=1)=>{
     c.globalCompositeOperation='lighter';
     for(const p of points) {
       let x=p.x*cs+p.z*sn;
       const z=p.z*cs-p.x*sn;
-      let y=p.y+z*.157, a=p.b*(.85+.15*Math.sin(t*.94+p.phase*2));
+      let y=p.y+z*.157, a=p.b*(.72+.28*Math.sin(t*.94+p.phase*2))*(0.25+0.75*introValue)*(1+pulseValue*0.9);
+      y += (1-introValue)*0.22*(0.5+0.5*Math.sin(p.phase*3));
       if(p.kind>=4){
         const ph=(p.kind%2===0?.071:-.057)*(1+(p.kind-4)*.25)*t;
         const cc=Math.cos(ph),ss=Math.sin(ph);
@@ -218,7 +231,7 @@ function makeFallback(cloud) {
       } else if(p.kind===3) {
         x=p.x+.019*Math.sin(.23*t+p.phase); y=(p.y+.16+t*(.009+p.s*1.7))%1.28-.16;
       } else if(p.kind===2) {
-        const beat=1+.034*Math.sin(1.8*t);
+        const beat=1+(.034+.05*pulseValue)*Math.sin(1.8*t);
         x=p.x*beat;y=-.06+(p.y+.06)*beat;
       } else if (p.kind===0) {
         x+=.0013*Math.sin(t+p.phase*4);y+=.0018*Math.cos(t*.81+p.phase*2);
@@ -278,6 +291,7 @@ export function createTree(canvas,{onSelect}={}) {
 
   let view={w:0,h:0,x:0,y:0,s:0,dpr:1}, photos=[], hits=[], angle=0, target=0;
   let drag=null, frame=0, last=0, animationTime=0, stopped=false, pauseOrbitUntil=0;
+  let pulseValue=0, startedAt=0, parallax=0, parallaxTarget=0;
   const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');
   function resize() {
     const {width:w,height:h}=canvas.getBoundingClientRect();
@@ -299,13 +313,13 @@ export function createTree(canvas,{onSelect}={}) {
     });
   }
 
-  function drawPhotos(sn,cs) {
+  function drawPhotos(sn,cs,originX) {
     hits=[];
     const list=photos.map(p=>({p,z:p.z*cs-p.x*sn})).sort((a,b)=>a.z-b.z);
     for(const {p,z} of list) {
       if (!p.img.naturalWidth || z < -p.r*.11) continue;
       const alpha=Math.min(1,Math.max(0,(z/p.r+.11)*3.1));
-      const x=view.x+(p.x*cs+p.z*sn)*view.s,y=view.y+(p.y+z*.157)*view.s;
+      const x=originX+(p.x*cs+p.z*sn)*view.s,y=view.y+(p.y+z*.157)*view.s;
       const w=view.s*(.077+.044*z), h=w*1.09;
       const iw=w*.88, ih=h*.79, crop=Math.max(iw/p.img.naturalWidth,ih/p.img.naturalHeight);
       const sw=iw/crop, sh=ih/crop;
@@ -330,16 +344,25 @@ export function createTree(canvas,{onSelect}={}) {
       animationTime+=dt;
       if(!drag && now>pauseOrbitUntil) target+=dt*.062;
     }
+    if (!startedAt) startedAt = now;
+    const intro = reducedMotion?.matches ? 1 : Math.min(1, (now - startedAt) / 1400);
+    const easedIntro = 1 - Math.pow(1 - intro, 3);
+    pulseValue *= Math.exp(-2.6 * dt);
+    parallax += (parallaxTarget - parallax) * (1 - Math.exp(-6 * dt));
+    const originX = view.x + parallax;
     angle+=(target-angle)*(1-Math.exp(-14*dt));
     const sn=Math.sin(angle),cs=Math.cos(angle);
     ctx.setTransform(view.dpr,0,0,view.dpr,0,0);
     ctx.clearRect(0,0,view.w,view.h);
-    if(gpu) gpu.draw(view,sn,cs,animationTime);
-    else fallback(ctx,view,sn,cs,animationTime);
-    const glowSize=view.s*(.236+.004*Math.sin(animationTime*1.8));
-    ctx.drawImage(heartGlow,view.x-glowSize*.5,view.y-view.s*.06-glowSize*.5,glowSize,glowSize);
-    drawPhotos(sn,cs);
+    const shiftedView = {...view, x: originX};
+    if(gpu) gpu.draw(shiftedView,sn,cs,animationTime,pulseValue,easedIntro);
+    else fallback(ctx,shiftedView,sn,cs,animationTime,pulseValue,easedIntro);
+    const glowSize=view.s*(.236+.004*Math.sin(animationTime*1.8))*(1+pulseValue*.35);
+    ctx.drawImage(heartGlow,originX-glowSize*.5,view.y-view.s*.06-glowSize*.5,glowSize,glowSize);
+    drawPhotos(sn,cs,originX);
   }
+
+  function pulse(strength=1) { pulseValue = Math.max(pulseValue, Math.min(1, strength)); }
 
   function rotate(delta) {
     if(!Number.isFinite(delta)) return;
@@ -356,7 +379,12 @@ export function createTree(canvas,{onSelect}={}) {
   }
   function move(e) {
     const bounds=canvas.getBoundingClientRect();
-    if(!drag) {canvas.style.cursor=hit(e.clientX-bounds.left,e.clientY-bounds.top)?'pointer':'grab';return;}
+    if(!drag) {
+      canvas.style.cursor=hit(e.clientX-bounds.left,e.clientY-bounds.top)?'pointer':'grab';
+      // Gentle parallax: the tree leans a few pixels toward the pointer.
+      parallaxTarget = reducedMotion?.matches ? 0 : (e.clientX - bounds.left) / Math.max(1, bounds.width) * 22 - 11;
+      return;
+    }
     if(e.pointerId!==drag.id) return;
     if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>4) drag.moved=true;
     if(drag.moved) {rotate((e.clientX-drag.lastX)*3.3/Math.max(160,view.s));canvas.style.cursor='grabbing';}
@@ -366,7 +394,7 @@ export function createTree(canvas,{onSelect}={}) {
     if(!drag || e.pointerId!==drag.id) return;
     if(!drag.moved && e.type==='pointerup') {
       const bounds=canvas.getBoundingClientRect(), photo=hit(e.clientX-bounds.left,e.clientY-bounds.top);
-      if(photo) onSelect?.(photo.index);
+      if(photo) onSelect?.(photo.index, {x: bounds.left + photo.x, y: bounds.top + photo.y});
     }
     drag=null;canvas.style.cursor='grab';
   }
@@ -374,7 +402,7 @@ export function createTree(canvas,{onSelect}={}) {
   canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);
   canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
   const observer=new ResizeObserver(resize);observer.observe(canvas);resize();frame=requestAnimationFrame(draw);
-  return {setPhotos,rotate,destroy() {
+  return {setPhotos,rotate,pulse,destroy() {
     stopped=true;cancelAnimationFrame(frame);observer.disconnect();gpu?.destroy();stage.remove();
     canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);
     canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up);
