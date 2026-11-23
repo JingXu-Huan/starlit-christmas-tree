@@ -21,15 +21,21 @@ let photos=[...samples], selected=0, cameraOn=false, timer;
 const viewer=el('viewer'),guide=el('guide'),scene=el('scene');
 function notify(message){el('toast').textContent=message;clearTimeout(timer);timer=setTimeout(()=>el('toast').textContent='',4500)}
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
-let closingViewer=false;
+let closingViewer=false, closeRun=0;
 function closeViewer(){
   if(!viewer.open||closingViewer)return;
   if(reducedMotion){viewer.close();return}
   closingViewer=true;
+  const run=++closeRun;
+  // The .closing class fades the backdrop out in step with the dialog;
+  // close() only runs once the animation has actually finished.
+  viewer.classList.add('closing');
   const animation=viewer.animate(
     [{opacity:1,transform:'scale(1) translateY(0)'},{opacity:0,transform:'scale(.94) translateY(14px)'}],
     {duration:240,easing:'cubic-bezier(.5,0,.75,.4)'});
-  animation.finished.then(()=>{closingViewer=false;if(viewer.open)viewer.close()}).catch(()=>{closingViewer=false;if(viewer.open)viewer.close()});
+  const timeout=new Promise(resolve=>setTimeout(resolve,300));
+  const settle=()=>{if(run!==closeRun)return;closingViewer=false;viewer.classList.remove('closing');if(viewer.open)viewer.close()};
+  Promise.race([animation.finished,timeout]).then(settle,settle);
 }
 function sparkles(){
   if(reducedMotion)return;
@@ -69,6 +75,9 @@ function showPhoto(index,origin=null,direction=0){
   el('photoIndex').textContent=(index+1)+' / '+photos.length;
   viewerStrip();
   if(opening){
+    // A stale close animation must not fade out the freshly opened dialog.
+    closeRun++;closingViewer=false;viewer.classList.remove('closing');
+    viewer.getAnimations().forEach(animation=>animation.cancel());
     // Expand from the photo that was tapped: the dialog grows out of it.
     if(origin&&!reducedMotion){
       const rect=viewer.getBoundingClientRect();
@@ -79,7 +88,7 @@ function showPhoto(index,origin=null,direction=0){
     if(!reducedMotion){
       image.getAnimations().forEach(animation=>animation.cancel());
       image.animate([
-        {opacity:0,transform:'scale(1.14)',filter:'blur(10px)'},
+        {opacity:0,transform:'scale(.86)',filter:'blur(8px)'},
         {opacity:1,transform:'scale(1)',filter:'blur(0)'}
       ],{duration:520,easing:'cubic-bezier(.22,1,.36,1)'});
       sparkles();

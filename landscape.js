@@ -10,7 +10,7 @@ export function drawLandscape(canvas) {
     return seed / 4294967296;
   }
   const stars = [];
-  for (let i = 0; i < 310; i++) {
+  for (let i = 0; i < 420; i++) {
     stars.push({
       x: random(), y: random(),
       radius: .35 + random() ** 4 * 1.35,
@@ -19,6 +19,16 @@ export function drawLandscape(canvas) {
       // A few stars flare noticeably; most only breathe.
       speed: .35 + random() * .9 + (random() < .08 ? 1.4 : 0),
       warm: random() < .12,
+    });
+  }
+  const brightStars = [];
+  for (let i = 0; i < 14; i++) {
+    brightStars.push({
+      x: random(), y: random() * .62,
+      radius: 1.5 + random() * 1.1,
+      phase: random() * Math.PI * 2,
+      speed: .5 + random() * .6,
+      warm: random() < .3,
     });
   }
   const snow = [];
@@ -97,6 +107,36 @@ export function drawLandscape(canvas) {
     }
     ctx.globalAlpha = 1;
 
+    // A quiet moon glow in the upper sky keeps the night from going flat black.
+    {
+      const moonX = w * .86, moonY = h * .13, moonR = Math.min(w, h) * .038;
+      const halo = ctx.createRadialGradient(moonX, moonY, moonR * .4, moonX, moonY, moonR * 5);
+      halo.addColorStop(0, 'rgba(226,234,255,.20)');
+      halo.addColorStop(.4, 'rgba(200,214,250,.07)');
+      halo.addColorStop(1, 'rgba(200,214,250,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(moonX, moonY, moonR * 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(238,242,255,.92)';
+      ctx.beginPath(); ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // A few bright stars carry a halo and a cross flare.
+    for (const star of brightStars) {
+      const twinkle = .6 + .4 * Math.sin(t * star.speed + star.phase);
+      const x = star.x * w, y = star.y * h, glowR = star.radius * 4.2;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, glowR);
+      g.addColorStop(0, star.warm ? `rgba(255,232,190,${.5 * twinkle})` : `rgba(214,226,255,${.5 * twinkle})`);
+      g.addColorStop(1, 'rgba(214,226,255,0)');
+      ctx.globalAlpha = 1; ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = twinkle; ctx.fillStyle = star.warm ? '#ffedcb' : '#f2f5ff';
+      ctx.beginPath(); ctx.arc(x, y, star.radius, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = .5 * twinkle; ctx.fillStyle = star.warm ? '#ffedcb' : '#f2f5ff';
+      ctx.fillRect(x - star.radius * 2.6, y - .6, star.radius * 5.2, 1.2);
+      ctx.fillRect(x - .6, y - star.radius * 2.6, 1.2, star.radius * 5.2);
+    }
+    ctx.globalAlpha = 1;
+
     // Shooting stars.
     if (!reduced) {
       nextMeteor -= dt;
@@ -140,6 +180,21 @@ export function drawLandscape(canvas) {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // Low mist drifting along the ground softens the base of the scene.
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 4; i++) {
+      const mx = ((i * .27 + (reduced ? 0 : t * .004 * (1 + i * .3))) % 1.2 - .1) * w;
+      const my = h * (.82 + i * .05);
+      const mr = w * (.22 + i * .05);
+      const mist = ctx.createRadialGradient(mx, my, 0, mx, my, mr);
+      mist.addColorStop(0, 'rgba(150,175,220,.055)');
+      mist.addColorStop(1, 'rgba(150,175,220,0)');
+      ctx.fillStyle = mist;
+      ctx.beginPath(); ctx.ellipse(mx, my, mr, mr * .16, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
   }
 
   function frameLoop(now) {

@@ -59,3 +59,7 @@ dialog{background:#11141e;border-color:#5c584f}
 }
 @media(prefers-reduced-motion:reduce){#viewer[open]{animation:none}#viewer::backdrop{animation:none}.viewer-glow{animation:none}.tile img{transition:none}.hand-meter .meter i{transition:none}}
 @media(max-width:740px){.hand-preview{width:128px;top:74px;right:14px;padding:6px}.hand-meter span:first-child{display:none}}
+
+#viewer.closing::backdrop{animation:backdrop-out .24s ease-in forwards}
+@keyframes backdrop-out{from{opacity:1}to{opacity:0}}
+@media(prefers-reduced-motion:reduce){#viewer.closing::backdrop{animation:none}}

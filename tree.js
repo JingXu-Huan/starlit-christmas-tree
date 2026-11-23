@@ -17,7 +17,18 @@ function colorAt(y, tint) {
 }
 
 function radiusAt(y) {
-  return 0.008 + 0.404 * Math.pow(Math.max(0, y), 0.86);
+  const t = Math.max(0, Math.min(1, y));
+  // Four stacked tiers: each layer flares at its lower edge and pinches
+  // slightly where the next layer starts, so the cone reads as a tree.
+  const edges = [0, 0.30, 0.58, 0.82, 1.0];
+  const radii = [0.012, 0.158, 0.268, 0.358, 0.418];
+  let k = 0;
+  while (k < 3 && t >= edges[k + 1]) k++;
+  const local = (t - edges[k]) / (edges[k + 1] - edges[k]);
+  let r = radii[k] + (radii[k + 1] - radii[k]) * Math.pow(local, 0.85);
+  r += Math.pow(Math.max(0, (local - 0.86) / 0.14), 2) * 0.028;
+  r *= 1 - 0.05 * Math.exp(-Math.pow(local / 0.10, 2));
+  return r;
 }
 
 function makeCloud() {
@@ -43,7 +54,7 @@ function makeCloud() {
     const bright=random()<.08;
     const tint=bright ? .24+random()*.25 : spread()*.085;
     const size=bright ? .0029+random()*.0020 : .0008+random()**1.65*.0026;
-    const isGold=random()<.07;
+    const isGold=random() < .05 + .11*(1-y);
     place(yy,r,a,isGold?size*1.35:size,isGold?gold():colorAt(y,tint),isGold?.92:bright ? .94 : .29+random()*.50);
   }
   for (let i=0; i<6160; i++) {
@@ -52,7 +63,7 @@ function makeCloud() {
     const r=radiusAt(y)*(.96+spread()*.125);
     const yy=y+spread()*(.003+.009*y)+.008*Math.sin(a*3+ring);
     const bright=random()<.08;
-    const isGold=random()<.07;
+    const isGold=random() < .05 + .11*(1-y);
     place(yy,r,a,bright?.0045:.001+random()**2*.0024,isGold?gold():colorAt(y,.07+random()*.22),isGold?.9:bright?.88:.28+random()*.44);
   }
   for(let i=0; i<2800; i++) {
@@ -89,6 +100,39 @@ function makeCloud() {
     const x = (random()-.5)*1.94, y = random()*1.28-.16, z = (random()-.5)*1.1;
     add(x,y,z,.0008+random()**3*.0044,[.67+random()*.29,.77+random()*.21,1], .15+random()*.39,3);
   }
+  // A short trunk grounds the cone: without it the tree floats.
+  for (let i=0; i<520; i++) {
+    const y=1.005+random()*.115, a=random()*TAU;
+    const r=(.052-.012*(y-1.005)/.115)*(.9+spread()*.18);
+    const warm=random()<.3;
+    add(Math.cos(a)*r, y, Math.sin(a)*r, .001+random()**2*.0026,
+      warm?[.72,.5,.26]:[.42+random()*.14,.3+random()*.08,.17+random()*.05],
+      .34+random()*.4);
+  }
+  // A dense garland ring marks the lowest branch layer so the base reads clearly.
+  for (let i=0; i<760; i++) {
+    const y=.965+random()*.035, a=random()*TAU;
+    const r=radiusAt(y)*(.985+spread()*.045);
+    const isGold=random()<.16, bright=random()<.14;
+    place(y,r,a,bright?.0038:.001+random()**2*.0026,isGold?gold():colorAt(y,.1+random()*.2),isGold?.92:bright?.9:.4+random()*.45);
+  }
+  // A five-point gold star crowns the heart: outline points plus a bright core.
+  {
+    const cy=-0.148, outer=.052, inner=.0215, star=[];
+    for (let k=0;k<10;k++){
+      const ang=-Math.PI/2 + k*Math.PI/5, rad=k%2===0?outer:inner;
+      star.push([Math.cos(ang)*rad, cy+Math.sin(ang)*rad]);
+    }
+    for (let i=0;i<520;i++){
+      const seg=i%10, p0=star[seg], p1=star[(seg+1)%10], f=random();
+      add(p0[0]+(p1[0]-p0[0])*f+spread()*.0012, p0[1]+(p1[1]-p0[1])*f+spread()*.0012, 0,
+        .0012+random()**2*.0028,[1,.78+random()*.16,.42+random()*.12],.72+random()*.28,2);
+    }
+    for (let i=0;i<130;i++){
+      const a=random()*TAU, r=Math.sqrt(random())*.016;
+      add(Math.cos(a)*r, cy+Math.sin(a)*r*.9, 0, .0014+random()**2*.003,[1,.9,.72],.9,2);
+    }
+  }
   return new Float32Array(points);
 }
 
@@ -119,7 +163,7 @@ void main() {
   y += (1.0-uIntro)*0.22*(0.5+0.5*sin(aPhase*3.0));
   // Twinkle is stronger than a gentle shimmer, and bright points flare.
   float shimmer=0.72+0.28*sin(uTime*(0.86+0.12*aPhase)+aPhase*3.3);
-  shimmer += 0.22*pow(0.5+0.5*sin(uTime*2.1+aPhase*5.0),3.0)*step(0.72,aBrightness);
+  shimmer += 0.30*pow(0.5+0.5*sin(uTime*2.1+aPhase*5.0),3.0)*step(0.72,aBrightness);
   float brightness = aBrightness * (0.25+0.75*uIntro) * (1.0+uPulse*0.9);
   float crown = aKind<0.5 ? 1.0-smoothstep(0.12,0.58,p.y) : 0.0;
   if (aKind < 0.5) {
@@ -155,7 +199,7 @@ void main() {
   vec2 p=gl_PointCoord*2.0-1.0;
   float r=dot(p,p);
   if(r>=1.0) discard;
-  float light=exp(-r*6.5)*0.83 + max(0.0,1.0-r)*0.14;
+  float light=exp(-r*5.6)*0.88 + max(0.0,1.0-r)*0.16;
   float alpha=light*vBrightness;
   gl_FragColor=vec4(vColor*alpha,alpha);
 }`;
@@ -270,6 +314,23 @@ function makeHeartGlow() {
   return sprite;
 }
 
+// A soft pool of light under the tree, painted on the foreground canvas.
+function makeGroundGlow() {
+  const sprite=document.createElement('canvas');
+  sprite.width=256; sprite.height=96;
+  const c=sprite.getContext('2d');
+  c.save();
+  c.translate(128,48); c.scale(1,0.375); c.translate(-128,-128);
+  const glow=c.createRadialGradient(128,128,0,128,128,128);
+  glow.addColorStop(0,'rgba(150,190,255,.30)');
+  glow.addColorStop(.35,'rgba(120,165,245,.20)');
+  glow.addColorStop(.62,'rgba(255,205,130,.10)');
+  glow.addColorStop(1,'rgba(120,150,220,0)');
+  c.fillStyle=glow; c.fillRect(0,0,256,256);
+  c.restore();
+  return sprite;
+}
+
 const PHOTO_HEIGHTS=[.43,.69,.33,.81,.57,.24,.74,.89];
 const PHOTO_ANGLES=[1.22,2.23,4.68,.58,3.54,1.82,5.77,2.91];
 
@@ -278,7 +339,7 @@ export function createTree(canvas,{onSelect}={}) {
   const stage=document.createElement('canvas');
   stage.setAttribute('aria-hidden','true');
   stage.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none';
-  const cloud=makeCloud(), heartGlow=makeHeartGlow();
+  const cloud=makeCloud(), heartGlow=makeHeartGlow(), groundGlow=makeGroundGlow();
   let gpu=null, fallback=null;
   function useGPU() {
     try { gpu=createGPU(stage,cloud); } catch { gpu=null; }
@@ -297,8 +358,8 @@ export function createTree(canvas,{onSelect}={}) {
     const {width:w,height:h}=canvas.getBoundingClientRect();
     if (!w||!h) return;
     const dpr=Math.min(window.devicePixelRatio||1,2);
-    const s=Math.min(h*.81,w*.94);
-    view={w,h,dpr,s,x:w*.5,y:(h-s*1.24)*.5+s*.127};
+    const s=Math.min(h*.74,w*.94);
+    view={w,h,dpr,s,x:w*.5,y:(h-s*1.34)*.5+s*.21};
     stage.width=canvas.width=Math.max(1,Math.round(w*dpr));
     stage.height=canvas.height=Math.max(1,Math.round(h*dpr));
   }
@@ -324,10 +385,12 @@ export function createTree(canvas,{onSelect}={}) {
       const iw=w*.88, ih=h*.79, crop=Math.max(iw/p.img.naturalWidth,ih/p.img.naturalHeight);
       const sw=iw/crop, sh=ih/crop;
       ctx.save();ctx.globalAlpha=alpha;ctx.translate(x,y);ctx.rotate(p.tilt);
+      ctx.shadowColor='rgba(160,195,255,.4)';ctx.shadowBlur=Math.max(2,view.s*.018);
       ctx.lineWidth=Math.max(.6,view.s*.001);ctx.strokeStyle='#b7d3fa';
       ctx.beginPath();ctx.moveTo(-w*.37,-h*.47);ctx.lineTo(0,-h*.64);ctx.lineTo(w*.37,-h*.47);ctx.stroke();
       ctx.fillStyle='#bac5d3';ctx.fillRect(-w*.5,-h*.5,w,h);
       ctx.fillStyle='#f0f2f5';ctx.fillRect(-w*.476,-h*.478,w*.952,h*.956);
+      ctx.shadowBlur=0;
       ctx.drawImage(p.img,(p.img.naturalWidth-sw)/2,(p.img.naturalHeight-sh)/2,sw,sh,-iw*.5,-h*.425,iw,ih);
       ctx.restore();
       if (alpha>.36) hits.push({index:p.index,x,y,w,h});
@@ -359,6 +422,8 @@ export function createTree(canvas,{onSelect}={}) {
     else fallback(ctx,shiftedView,sn,cs,animationTime,pulseValue,easedIntro);
     const glowSize=view.s*(.236+.004*Math.sin(animationTime*1.8))*(1+pulseValue*.35);
     ctx.drawImage(heartGlow,originX-glowSize*.5,view.y-view.s*.06-glowSize*.5,glowSize,glowSize);
+    const groundW=view.s*1.06, groundH=view.s*.20;
+    ctx.drawImage(groundGlow,originX-groundW*.5,view.y+view.s*1.01-groundH*.5,groundW,groundH);
     drawPhotos(sn,cs,originX);
   }
 
