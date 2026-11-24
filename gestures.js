@@ -27,7 +27,7 @@ function smoothLandmarks(previous, current, alpha) {
 
 export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, onRotate, onStatus, onFrame, onPose }) {
   let lastStatus;
-  let lastSeen = -Infinity;
+  let lastSeen = -Infinity, lastRotateAt = -Infinity;
   let firstPinch, candidateSince, fistSince, palmX, lastPalmX;
   let pinched, fistFired, cooldownUntil;
   let smoothImage = null, smoothWorld = null, absentSent = false;
@@ -44,6 +44,7 @@ export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, 
     firstPinch = candidateSince = fistSince = palmX = lastPalmX = null;
     pinched = fistFired = false;
     cooldownUntil = 0;
+    lastRotateAt = -Infinity;
     smoothImage = smoothWorld = null;
   }
   function status(value) {
@@ -135,6 +136,13 @@ export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, 
     // apart, which was the common reason a second pinch never registered.
     const transition = pinched ? pinchGap > 0.44 : pinchGap < 0.36;
     if (transition) {
+      // A closing edge right after the palm was moving is treated as the
+      // thumb drifting during rotation, not a deliberate pinch: rotating
+      // and pinching are separated by stopping first. The release edge
+      // is unaffected, so a held pinch still releases normally.
+      if (!pinched && now - lastRotateAt < 250) {
+        candidateSince = null;
+      } else {
       candidateSince ??= now;
       // A deep pinch (fingertips firmly together) counts at once: the
       // 12 ms hold exists only to reject tremor near the threshold.
@@ -156,6 +164,7 @@ export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, 
           }
         }
       }
+      }
     } else {
       candidateSince = null;
     }
@@ -171,7 +180,10 @@ export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, 
     }
     // Three extended fingers are enough for a palm: requiring all four
     // dropped rotation whenever the little finger curled slightly.
-    if (extended.filter(Boolean).length >= 3 && !pinched && pinchGap > 0.44) {
+    // Rotation needs a clearly open hand (gap > 0.50, above the pinch
+    // release at 0.44): the dead band between the two is what keeps a
+    // closing hand from rotating the tree on its way to a pinch.
+    if (extended.filter(Boolean).length >= 3 && !pinched && pinchGap > 0.50) {
       emitPose('palm');
       // Follow the raw hand position, not the smoothed one: the smoothed
       // landmarks lag a fast palm by a frame or two, and rotation built
@@ -181,6 +193,7 @@ export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, 
       if (lastPalmX !== null && Math.abs(palmX - lastPalmX) > 0.0005) {
         const movement = Math.max(-0.11, Math.min(0.11, palmX - lastPalmX));
         onRotate?.(movement * 9);
+        lastRotateAt = now;
         lastPalmX = palmX;
       }
       lastPalmX ??= palmX;

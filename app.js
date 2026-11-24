@@ -57,7 +57,7 @@ function landingRect(index){
 // motion is one GPU transform instead of reflowing layout every frame.
 // `parent` is the dialog while opening (above the backdrop) and the body
 // once the dialog has closed.
-function flyClone(src,fromRect,toRect,parent,fadeOut){
+function flyClone(src,fromRect,toRect,parent,fadeOut,duration){
   const clone=document.createElement('div');
   clone.className='fly-photo';
   const img=new Image();img.alt='';img.src=src;
@@ -80,8 +80,26 @@ function flyClone(src,fromRect,toRect,parent,fadeOut){
        {transform:'translate(0,0) scale(.92)',opacity:0,transformOrigin:'center center',offset:1}]
     : [{transform:from,opacity:1,transformOrigin:'center center'},
        {transform:'translate(0,0) scale(1,1)',opacity:1,transformOrigin:'center center'}];
-  const animation=clone.animate(keyframes,{duration:fadeOut?460:520,easing:'cubic-bezier(.22,1,.36,1)',fill:'forwards'});
+  const animation=clone.animate(keyframes,{duration:duration??(fadeOut?520:620),easing:'cubic-bezier(.22,1,.36,1)',fill:'forwards'});
   return {clone,animation};
+}
+// Shrink the shown photo back to where it hangs on the tree and close
+// the dialog. Returns a promise that settles once the flight has landed
+// (or its timeout fires), so a photo switch can wait for it before the
+// tree turns and the next photo flies out.
+function flyBackToTree(index,duration=600){
+  const landing=landingRect(index);
+  const fromRect=rectOf(el('large').getBoundingClientRect());
+  // An opening flight in progress is abandoned; its clone must not
+  // linger over the closing one.
+  flyRun++;
+  viewer.classList.remove('flying');
+  viewer.querySelectorAll('.fly-photo').forEach(node=>node.remove());
+  if(viewer.open) viewer.close();
+  if(!landing||!fromRect||reducedMotion) return Promise.resolve();
+  const {clone,animation}=flyClone(photos[index].src,fromRect,landing,document.body,true,duration);
+  const timeout=new Promise(resolve=>setTimeout(resolve,duration+60));
+  return Promise.race([animation.finished,timeout]).then(()=>clone.remove(),()=>clone.remove());
 }
 function closeViewer(){
   if(!viewer.open||closingViewer)return;
@@ -92,15 +110,7 @@ function closeViewer(){
   const landing=landingRect(selected);
   const fromRect=rectOf(el('large').getBoundingClientRect());
   if(landing&&fromRect){
-    // An opening flight in progress is abandoned; its clone must not
-    // linger over the closing one.
-    flyRun++;
-    viewer.classList.remove('flying');
-    viewer.querySelectorAll('.fly-photo').forEach(node=>node.remove());
-    viewer.close();
-    const {clone,animation}=flyClone(photos[selected].src,fromRect,landing,document.body,true);
-    const timeout=new Promise(resolve=>setTimeout(resolve,520));
-    Promise.race([animation.finished,timeout]).then(()=>clone.remove(),()=>clone.remove());
+    flyBackToTree(selected,520);
     return;
   }
   closingViewer=true;
@@ -138,7 +148,7 @@ function viewerStrip(){
     thumb.setAttribute('aria-label',p.name);
     const img=new Image();img.alt='';img.src=p.src;
     thumb.append(img);
-    thumb.onclick=()=>showPhoto(i,null,i>selected?1:-1);
+    thumb.onclick=()=>switchPhoto(i);
     return thumb;
   }));
 }
@@ -171,7 +181,7 @@ function showPhoto(index,origin=null,direction=0,sourceRect=null){
         return;
       }
       const {clone,animation}=flyClone(p.src,source,target,viewer,false);
-      const timeout=new Promise(resolve=>setTimeout(resolve,600));
+      const timeout=new Promise(resolve=>setTimeout(resolve,700));
       const settle=()=>{
         if(run!==flyRun)return;
         clone.remove();viewer.classList.remove('flying');
@@ -206,7 +216,35 @@ function showPhoto(index,origin=null,direction=0,sourceRect=null){
     ],{duration:380,easing:'cubic-bezier(.22,1,.36,1)'});
   }
 }
-function cycle(direction=1){showPhoto((selected+direction+photos.length)%photos.length,null,direction)}
+// Switching photos is a slow three-part round trip, not a slide:
+// the shown photo shrinks back to the tree, the tree turns until the
+// next photo faces the viewer, and the next photo enlarges from the
+// tree. Start and end are both the tree. While one switch is running,
+// a further request is remembered and runs after it, instead of two
+// flights overlapping.
+let switchingPhotos=false, switchRun=0, pendingSwitch=null;
+async function switchPhoto(index){
+  if(index<0||index>=photos.length) return;
+  if(!viewer.open||reducedMotion||index===selected){ showPhoto(index); return; }
+  if(switchingPhotos){ pendingSwitch=index; return; }
+  switchingPhotos=true;
+  const run=++switchRun;
+  const fromIndex=selected;
+  await flyBackToTree(fromIndex,600);
+  if(run!==switchRun){ switchingPhotos=false; return; }
+  const delta=tree.photoFrontDelta?.(index)??0;
+  if(delta) tree.spinBy(delta,850);
+  // The dialog is closed during the turn, so the tree is fully visible.
+  await new Promise(resolve=>setTimeout(resolve,delta?950:300));
+  if(run!==switchRun){ switchingPhotos=false; return; }
+  switchingPhotos=false;
+  // The user may have opened another photo (or closed everything) while
+  // the tree was turning; do not override that.
+  if(!viewer.open) showPhoto(index,null,index>fromIndex?1:-1);
+  const next=pendingSwitch; pendingSwitch=null;
+  if(next!==null&&next!==selected) switchPhoto(next);
+}
+function cycle(direction=1){switchPhoto((selected+direction+photos.length)%photos.length)}
 el('prev').onclick=()=>cycle(-1);el('next').onclick=()=>cycle();
 el('guideBtn').onclick=()=>guide.showModal();
 for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>{if(button.dataset.close==='viewer')closeViewer();else el(button.dataset.close).close()};

@@ -415,6 +415,7 @@ export function createTree(canvas,{onSelect}={}) {
   stage.addEventListener('webglcontextlost',onContextLost); stage.addEventListener('webglcontextrestored',useGPU);
 
   let view={w:0,h:0,x:0,y:0,s:0,dpr:1}, photos=[], hits=[], angle=0, target=0;
+  let spinStart=0, spinFrom=0, spinTo=0, spinEnd=0;
   let drag=null, frame=0, last=0, animationTime=0, stopped=false, pauseOrbitUntil=0;
   let pulseValue=0, startedAt=0, parallax=0, parallaxTarget=0;
   let gatherValue=0, gatherTarget=0, burstValue=0;
@@ -435,7 +436,7 @@ export function createTree(canvas,{onSelect}={}) {
       if (!img) {img=new Image();img.src=p.src;}
       const h=PHOTO_HEIGHTS[i%8]+.024*Math.sin(Math.floor(i/8)*2.39);
       const r=radiusAt(h)*1.11, a=PHOTO_ANGLES[i%8]+Math.floor(i/8)*2.39996;
-      return {index:i,src:p.src,img,x:r*Math.cos(a),y:h,z:r*Math.sin(a),r,tilt:Math.sin(i*1.8+.55)*.083};
+      return {index:i,src:p.src,img,x:r*Math.cos(a),y:h,z:r*Math.sin(a),r,angle:a,tilt:Math.sin(i*1.8+.55)*.083};
     });
   }
 
@@ -502,7 +503,18 @@ export function createTree(canvas,{onSelect}={}) {
     const originX = view.x + parallax;
     // 24/s instead of 14/s: the old smoothing lagged visibly behind a
     // moving palm, which is what "not following the hand" felt like.
-    angle+=(target-angle)*(1-Math.exp(-24*dt));
+    // A programmed spin (photo switching) eases over its own duration
+    // instead of being chased by the same lerp, so it reads as a turn
+    // rather than a snap.
+    if (spinEnd && now < spinEnd) {
+      const progress=(now-spinStart)/(spinEnd-spinStart);
+      const eased=progress<.5 ? 4*progress*progress*progress : 1-Math.pow(-2*progress+2,3)/2;
+      angle=spinFrom+(spinTo-spinFrom)*eased;
+      target=angle;
+    } else {
+      if (spinEnd) { angle=spinTo; target=spinTo; spinEnd=0; }
+      angle+=(target-angle)*(1-Math.exp(-24*dt));
+    }
     const sn=Math.sin(angle),cs=Math.cos(angle);
     ctx.setTransform(view.dpr,0,0,view.dpr,0,0);
     ctx.clearRect(0,0,view.w,view.h);
@@ -531,9 +543,30 @@ export function createTree(canvas,{onSelect}={}) {
 
   function rotate(delta) {
     if(!Number.isFinite(delta)) return;
+    spinEnd=0;
     target+=delta; pauseOrbitUntil=performance.now()+1000;
     // Turning lights the tree up a little, so a gesture visibly answers.
     pulseValue=Math.max(pulseValue,Math.min(0.25,Math.abs(delta)*0.6));
+  }
+  // How far the tree must turn for this photo to face the viewer: a photo
+  // faces front when its rotated depth z' = r*sin(a - angle) is largest,
+  // i.e. angle = a - PI/2. The shortest way round is used.
+  function photoFrontDelta(index) {
+    const photo=photos[index];
+    if(!photo) return 0;
+    let delta=photo.angle-Math.PI/2-angle;
+    while(delta>Math.PI) delta-=2*Math.PI;
+    while(delta<-Math.PI) delta+=2*Math.PI;
+    return delta;
+  }
+  // Turn the tree by a fixed amount over a fixed time, easing in and out,
+  // so a photo switch can show the tree turning. Reduced motion snaps.
+  function spinBy(delta, durationMs=850) {
+    if(!Number.isFinite(delta)||Math.abs(delta)<0.02) return;
+    if(reducedMotion?.matches){ angle+=delta; target=angle; return; }
+    spinFrom=angle; spinTo=angle+delta;
+    spinStart=performance.now(); spinEnd=spinStart+durationMs;
+    pauseOrbitUntil=spinEnd+200;
   }
   function hit(x,y) {
     for(let i=hits.length-1;i>=0;i--) {
@@ -582,7 +615,7 @@ export function createTree(canvas,{onSelect}={}) {
   canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);
   canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
   const observer=new ResizeObserver(resize);observer.observe(canvas);resize();frame=requestAnimationFrame(draw);
-  return {setPhotos,rotate,pulse,setGather,burst,photoHit,destroy() {
+  return {setPhotos,rotate,spinBy,photoFrontDelta,pulse,setGather,burst,photoHit,destroy() {
     stopped=true;cancelAnimationFrame(frame);observer.disconnect();gpu?.destroy();stage.remove();
     canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);
     canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up);
