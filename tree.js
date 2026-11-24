@@ -167,16 +167,20 @@ void main() {
   // Entrance: the cloud rises a little and fades in over the first moment.
   y += (1.0-uIntro)*0.22*(0.5+0.5*sin(aPhase*3.0));
   // Twinkle is stronger than a gentle shimmer, and bright points flare.
-  float shimmer=0.72+0.28*sin(uTime*(0.86+0.12*aPhase)+aPhase*3.3);
-  shimmer += 0.30*pow(0.5+0.5*sin(uTime*2.1+aPhase*5.0),3.0)*step(0.72,aBrightness);
+  // Several speeds overlap so the sparkle never settles into one rhythm.
+  float shimmer=0.70+0.30*sin(uTime*(1.25+0.12*aPhase)+aPhase*3.3);
+  shimmer += 0.30*pow(0.5+0.5*sin(uTime*2.8+aPhase*5.0),3.0)*step(0.72,aBrightness);
+  shimmer += 0.10*sin(uTime*3.7+aPhase*9.0);
   float brightness = aBrightness * (0.25+0.75*uIntro) * (1.0+uPulse*0.9);
   float crown = aKind<0.5 ? 1.0-smoothstep(0.12,0.58,p.y) : 0.0;
   if (aKind < 0.5) {
-    x += 0.0013*sin(1.15*uTime+aPhase*4.0);
-    y += 0.0018*cos(0.81*uTime+aPhase*2.0);
+    // Drift was only ~1-2 px and read as frozen; roughly triple it, with
+    // a second harmonic so neighbouring points do not move in lockstep.
+    x += 0.0032*sin(1.6*uTime+aPhase*4.0);
+    y += 0.0040*cos(1.1*uTime+aPhase*2.0) + 0.0012*sin(2.3*uTime+aPhase*6.0);
     brightness *= 0.65 + 0.42*clamp(0.5+z/max(0.015,p.y*0.59),0.0,1.0);
   } else if (aKind > 3.5) {
-    float speed = mod(aKind,2.0)<0.5 ? 0.071 : -0.057;
+    float speed = mod(aKind,2.0)<0.5 ? 0.095 : -0.078;
     float phase = speed*(1.0+(aKind-4.0)*0.25)*uTime;
     float rx=x*cos(phase)+z*sin(phase);
     float rz=z*cos(phase)-x*sin(phase);
@@ -186,10 +190,18 @@ void main() {
     y=mod(p.y+0.16+uTime*(0.009+aSize*1.7),1.28)-0.16;
     shimmer=0.69+0.31*sin(0.92*uTime+aPhase);
   } else if (aKind > 1.5) {
-    float beat=1.0+(0.034+0.05*uPulse)*sin(1.8*uTime);
+    float beat=1.0+(0.06+0.08*uPulse)*sin(1.8*uTime);
     x=p.x*beat;
     y=-0.06+(p.y+0.06)*beat;
   }
+  // Sway and breathing: the top moves more than the base, and the whole
+  // cone breathes a little, so the tree reads as alive instead of frozen.
+  // Gathering (below) mixes toward the ball, so a gathered ball does not sway.
+  float sway = sin(uTime*0.45 + p.y*1.4) * 0.011 * p.y;
+  float gust = max(0.0, sin(uTime*0.21) + sin(uTime*0.13+1.7)) * 0.006 * p.y;
+  float breathe = 1.0 + 0.012*sin(uTime*0.75);
+  x = x*breathe + sway + gust;
+  y += cos(uTime*0.45 + p.y*1.4) * 0.0035 * p.y;
   // Gathering: every particle except the falling snow drifts toward one
   // glowing ball at the middle of the tree, with a little per-particle
   // jitter so the ball reads as a dense cluster instead of a single point.
@@ -281,21 +293,27 @@ function makeFallback(cloud) {
     for(const p of points) {
       let x=p.x*cs+p.z*sn;
       const z=p.z*cs-p.x*sn;
-      let y=p.y+z*.157, a=p.b*(.72+.28*Math.sin(t*.94+p.phase*2))*(0.25+0.75*introValue)*(1+pulseValue*0.9);
+      let y=p.y+z*.157, a=p.b*(.70+.30*Math.sin(t*1.25+p.phase*2))*(0.25+0.75*introValue)*(1+pulseValue*0.9);
       y += (1-introValue)*0.22*(0.5+0.5*Math.sin(p.phase*3));
       if(p.kind>=4){
-        const ph=(p.kind%2===0?.071:-.057)*(1+(p.kind-4)*.25)*t;
+        const ph=(p.kind%2===0?.095:-.078)*(1+(p.kind-4)*.25)*t;
         const cc=Math.cos(ph),ss=Math.sin(ph);
         y=p.y+(z*cc-x*ss)*.157;x=x*cc+z*ss;
       } else if(p.kind===3) {
         x=p.x+.019*Math.sin(.23*t+p.phase); y=(p.y+.16+t*(.009+p.s*1.7))%1.28-.16;
       } else if(p.kind===2) {
-        const beat=1+(.034+.05*pulseValue)*Math.sin(1.8*t);
+        const beat=1+(.06+.08*pulseValue)*Math.sin(1.8*t);
         x=p.x*beat;y=-.06+(p.y+.06)*beat;
       } else if (p.kind===0) {
-        x+=.0013*Math.sin(t+p.phase*4);y+=.0018*Math.cos(t*.81+p.phase*2);
+        x+=.0032*Math.sin(1.6*t+p.phase*4);y+=.0040*Math.cos(1.1*t+p.phase*2)+.0012*Math.sin(2.3*t+p.phase*6);
         a*=.72+.28*Math.min(1,Math.max(0,.5+z/Math.max(.015,p.y*.59)));
       }
+      // Same sway and breathing as the WebGL shader, so the fallback
+      // render does not look frozen either.
+      const sway=Math.sin(t*0.45+p.y*1.4)*0.011*p.y;
+      const gust=Math.max(0,Math.sin(t*0.21)+Math.sin(t*0.13+1.7))*0.006*p.y;
+      x=x*(1+0.012*Math.sin(t*0.75))+sway+gust;
+      y+=Math.cos(t*0.45+p.y*1.4)*0.0035*p.y;
       if (gatherValue > 0.001 && p.kind !== 3) {
         const gx = Math.sin(p.phase*12.9898) * 0.028, gy = 0.45 + Math.cos(p.phase*7.233) * 0.028;
         x = x + (gx - x) * gatherValue; y = y + (gy - y) * gatherValue;
@@ -403,6 +421,9 @@ export function createTree(canvas,{onSelect}={}) {
       const alpha=Math.min(1,Math.max(0,(z/p.r+.11)*3.1))*(1-gatherValue*0.92);
       if (alpha <= 0.02) continue;
       let x=originX+(p.x*cs+p.z*sn)*view.s,y=view.y+(p.y+z*.157)*view.s;
+      // Photos hang from the tree, so they bob gently instead of sitting
+      // perfectly still. animationTime is frozen under reduced motion.
+      y+=Math.sin(animationTime*0.9+p.index*1.7)*view.s*0.004;
       // While gathered, the photos shrink toward the ball and fade out
       // instead of floating where the tree used to be.
       x=originX+(x-originX)*(1-gatherValue*0.7);
@@ -410,7 +431,8 @@ export function createTree(canvas,{onSelect}={}) {
       const w=view.s*(.077+.044*z)*(1-gatherValue*0.55), h=w*1.09;
       const iw=w*.88, ih=h*.79, crop=Math.max(iw/p.img.naturalWidth,ih/p.img.naturalHeight);
       const sw=iw/crop, sh=ih/crop;
-      ctx.save();ctx.globalAlpha=alpha;ctx.translate(x,y);ctx.rotate(p.tilt);
+      const wobble=Math.sin(animationTime*0.7+p.index*2.1)*0.018;
+      ctx.save();ctx.globalAlpha=alpha;ctx.translate(x,y);ctx.rotate(p.tilt+wobble);
       ctx.shadowColor='rgba(160,195,255,.4)';ctx.shadowBlur=Math.max(2,view.s*.018);
       ctx.lineWidth=Math.max(.6,view.s*.001);ctx.strokeStyle='#b7d3fa';
       ctx.beginPath();ctx.moveTo(-w*.37,-h*.47);ctx.lineTo(0,-h*.64);ctx.lineTo(w*.37,-h*.47);ctx.stroke();
@@ -431,7 +453,8 @@ export function createTree(canvas,{onSelect}={}) {
     last=now;
     if(!reducedMotion?.matches) {
       animationTime+=dt;
-      if(!drag && now>pauseOrbitUntil) target+=dt*.062;
+      // The idle turn breathes instead of ticking at one constant speed.
+      if(!drag && now>pauseOrbitUntil) target+=dt*(0.055+0.035*Math.sin(animationTime*0.4));
     }
     if (!startedAt) startedAt = now;
     const intro = reducedMotion?.matches ? 1 : Math.min(1, (now - startedAt) / 1400);
@@ -455,7 +478,7 @@ export function createTree(canvas,{onSelect}={}) {
     const shiftedView = {...view, x: originX};
     if(gpu) gpu.draw(shiftedView,sn,cs,animationTime,pulseValue,easedIntro,gatherValue);
     else fallback(ctx,shiftedView,sn,cs,animationTime,pulseValue,easedIntro,gatherValue);
-    const glowSize=view.s*(.236+.004*Math.sin(animationTime*1.8))*(1+pulseValue*.35);
+    const glowSize=view.s*(.236+.010*Math.sin(animationTime*1.4))*(1+pulseValue*.35);
     ctx.drawImage(heartGlow,originX-glowSize*.5,view.y-view.s*.06-glowSize*.5,glowSize,glowSize);
     const groundW=view.s*1.06, groundH=view.s*.20;
     ctx.drawImage(groundGlow,originX-groundW*.5,view.y+view.s*1.01-groundH*.5,groundW,groundH);
@@ -469,6 +492,8 @@ export function createTree(canvas,{onSelect}={}) {
   function rotate(delta) {
     if(!Number.isFinite(delta)) return;
     target+=delta; pauseOrbitUntil=performance.now()+2000;
+    // Turning lights the tree up a little, so a gesture visibly answers.
+    pulseValue=Math.max(pulseValue,Math.min(0.25,Math.abs(delta)*0.6));
   }
   function hit(x,y) {
     for(let i=hits.length-1;i>=0;i--) {
