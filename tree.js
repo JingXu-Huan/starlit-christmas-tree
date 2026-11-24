@@ -526,11 +526,15 @@ export function createTree(canvas,{onSelect}={}) {
     rotate((e.clientX-drag.lastX)*3.3/Math.max(160,view.s));
     drag.lastX=e.clientX;
   }
+  function photoHit(index) {
+    return hits.find(b => b.index === index) || null;
+  }
   function up(e) {
     if(!drag || e.pointerId!==drag.id) return;
     if(e.type==='pointerup' && Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<=CLICK_TOLERANCE) {
       const bounds=canvas.getBoundingClientRect(), photo=hit(e.clientX-bounds.left,e.clientY-bounds.top);
-      if(photo) onSelect?.(photo.index, {x: bounds.left + photo.x, y: bounds.top + photo.y});
+      if(photo) onSelect?.(photo.index, {x: bounds.left + photo.x, y: bounds.top + photo.y},
+        {left: bounds.left + photo.x - photo.w/2, top: bounds.top + photo.y - photo.h/2, width: photo.w, height: photo.h});
     }
     drag=null;canvas.style.cursor='grab';
   }
@@ -538,7 +542,7 @@ export function createTree(canvas,{onSelect}={}) {
   canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);
   canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
   const observer=new ResizeObserver(resize);observer.observe(canvas);resize();frame=requestAnimationFrame(draw);
-  return {setPhotos,rotate,pulse,setGather,destroy() {
+  return {setPhotos,rotate,pulse,setGather,photoHit,destroy() {
     stopped=true;cancelAnimationFrame(frame);observer.disconnect();gpu?.destroy();stage.remove();
     canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);
     canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up);

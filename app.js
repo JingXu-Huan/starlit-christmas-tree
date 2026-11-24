@@ -23,10 +23,86 @@ let photos=[...samples], selected=0, cameraOn=false, timer;
 const viewer=el('viewer'),guide=el('guide'),scene=el('scene');
 function notify(message){el('toast').textContent=message;clearTimeout(timer);timer=setTimeout(()=>el('toast').textContent='',4500)}
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
-let closingViewer=false, closeRun=0;
+let closingViewer=false, closeRun=0, flyRun=0;
+function rectOf(rect){
+  if(!rect||!rect.width||!rect.height)return null;
+  return {left:rect.left,top:rect.top,width:rect.width,height:rect.height};
+}
+function treePhotoRect(index){
+  const hit=tree?.photoHit?.(index);
+  if(!hit)return null;
+  const bounds=el('tree').getBoundingClientRect();
+  return {left:bounds.left+hit.x-hit.w/2,top:bounds.top+hit.y-hit.h/2,width:hit.w,height:hit.h};
+}
+function galleryRect(index){
+  const tile=el('film').children[index];
+  if(!tile)return null;
+  const r=rectOf(tile.getBoundingClientRect());
+  // A tile scrolled out of the film strip is no landing point: the eye
+  // cannot follow a flight to somewhere off-screen.
+  if(!r||r.left>=innerWidth||r.left+r.width<=0)return null;
+  return r;
+}
+function treeCentreRect(){
+  const bounds=el('tree').getBoundingClientRect();
+  return {left:bounds.left+bounds.width/2-26,top:bounds.top+bounds.height*0.45-28,width:52,height:56};
+}
+// Where a photo lives right now: on the tree if it is facing us, else its
+// gallery tile if that is on screen, else the middle of the tree.
+function landingRect(index){
+  return treePhotoRect(index)||galleryRect(index)||treeCentreRect();
+}
+// A framed clone that flies from one rectangle to another. It is placed
+// at the destination rectangle and transformed from the source, so the
+// motion is one GPU transform instead of reflowing layout every frame.
+// `parent` is the dialog while opening (above the backdrop) and the body
+// once the dialog has closed.
+function flyClone(src,fromRect,toRect,parent,fadeOut){
+  const clone=document.createElement('div');
+  clone.className='fly-photo';
+  const img=new Image();img.alt='';img.src=src;
+  clone.append(img);
+  // The frame padding sits outside the photo box, so the picture itself
+  // lands exactly on the viewer's image box (or the tree photo), not
+  // 8 px smaller than it.
+  const pad=4;
+  const box={left:toRect.left-pad,top:toRect.top-pad,width:toRect.width+pad*2,height:toRect.height+pad*2};
+  clone.style.left=box.left+'px';clone.style.top=box.top+'px';
+  clone.style.width=box.width+'px';clone.style.height=box.height+'px';
+  parent.append(clone);
+  const dx=(fromRect.left+fromRect.width/2)-(box.left+box.width/2);
+  const dy=(fromRect.top+fromRect.height/2)-(box.top+box.height/2);
+  const sx=fromRect.width/box.width, sy=fromRect.height/box.height;
+  const from=`translate(${dx}px,${dy}px) scale(${sx},${sy})`;
+  const keyframes=fadeOut
+    ? [{transform:from,opacity:1,transformOrigin:'center center',offset:0},
+       {transform:'translate(0,0) scale(1,1)',opacity:1,transformOrigin:'center center',offset:.78},
+       {transform:'translate(0,0) scale(.92)',opacity:0,transformOrigin:'center center',offset:1}]
+    : [{transform:from,opacity:1,transformOrigin:'center center'},
+       {transform:'translate(0,0) scale(1,1)',opacity:1,transformOrigin:'center center'}];
+  const animation=clone.animate(keyframes,{duration:fadeOut?460:520,easing:'cubic-bezier(.22,1,.36,1)',fill:'forwards'});
+  return {clone,animation};
+}
 function closeViewer(){
   if(!viewer.open||closingViewer)return;
   if(reducedMotion){viewer.close();return}
+  // Fly back to where the photo is now, instead of fading in place:
+  // capture the landing point before the dialog closes, while the
+  // tree's current photo position is still known.
+  const landing=landingRect(selected);
+  const fromRect=rectOf(el('large').getBoundingClientRect());
+  if(landing&&fromRect){
+    // An opening flight in progress is abandoned; its clone must not
+    // linger over the closing one.
+    flyRun++;
+    viewer.classList.remove('flying');
+    viewer.querySelectorAll('.fly-photo').forEach(node=>node.remove());
+    viewer.close();
+    const {clone,animation}=flyClone(photos[selected].src,fromRect,landing,document.body,true);
+    const timeout=new Promise(resolve=>setTimeout(resolve,520));
+    Promise.race([animation.finished,timeout]).then(()=>clone.remove(),()=>clone.remove());
+    return;
+  }
   closingViewer=true;
   const run=++closeRun;
   // The .closing class fades the backdrop out in step with the dialog;
@@ -66,7 +142,7 @@ function viewerStrip(){
     return thumb;
   }));
 }
-function showPhoto(index,origin=null,direction=0){
+function showPhoto(index,origin=null,direction=0,sourceRect=null){
   if(guide.open||index<0||index>=photos.length)return;
   const opening=!viewer.open;
   const previous=selected;
@@ -82,7 +158,30 @@ function showPhoto(index,origin=null,direction=0){
     // A stale close animation must not fade out the freshly opened dialog.
     closeRun++;closingViewer=false;viewer.classList.remove('closing');
     viewer.getAnimations().forEach(animation=>animation.cancel());
-    // Expand from the photo that was tapped: the dialog grows out of it.
+    // The photo already hangs on the tree (or in the gallery), so it
+    // flies from there to the viewer instead of appearing out of thin air.
+    const source=rectOf(sourceRect)||treePhotoRect(index)||galleryRect(index);
+    if(source&&!reducedMotion){
+      const run=++flyRun;
+      viewer.classList.add('flying');
+      viewer.showModal();
+      const target=rectOf(el('large').getBoundingClientRect());
+      if(!target){
+        viewer.classList.remove('flying');
+        return;
+      }
+      const {clone,animation}=flyClone(p.src,source,target,viewer,false);
+      const timeout=new Promise(resolve=>setTimeout(resolve,600));
+      const settle=()=>{
+        if(run!==flyRun)return;
+        clone.remove();viewer.classList.remove('flying');
+        if(viewer.open&&!reducedMotion)sparkles();
+      };
+      Promise.race([animation.finished,timeout]).then(settle,settle);
+      return;
+    }
+    // No usable starting point (photo facing away and tile off-screen):
+    // fall back to growing out of the tapped point.
     if(origin&&!reducedMotion){
       const rect=viewer.getBoundingClientRect();
       const cx=origin.x??(origin.left+origin.width/2), cy=origin.y??(origin.top+origin.height/2);
@@ -114,12 +213,12 @@ for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=
 viewer.addEventListener('cancel',e=>{e.preventDefault();closeViewer()});
 for(const dialog of [viewer,guide])dialog.addEventListener('click',e=>{if(e.target!==dialog)return;const box=dialog.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom){if(dialog===viewer)closeViewer();else dialog.close()}});
 drawLandscape(el('landscape'));
-const tree=createTree(el('tree'),{onSelect:showPhoto});
+const tree=createTree(el('tree'),{onSelect:(index,origin,rect)=>showPhoto(index,origin,0,rect)});
 function gallery(){
   const fragment=document.createDocumentFragment();
   photos.forEach((p,i)=>{
     const tile=document.createElement('button'),img=new Image(),caption=document.createElement('span');
-    tile.className='tile';tile.onclick=()=>{const r=tile.getBoundingClientRect();showPhoto(i,{x:r.left+r.width/2,y:r.top+r.height/2})};img.alt='';img.src=p.src;caption.textContent=p.name;
+    tile.className='tile';tile.onclick=()=>{const r=tile.getBoundingClientRect();showPhoto(i,{x:r.left+r.width/2,y:r.top+r.height/2},0,r)};img.alt='';img.src=p.src;caption.textContent=p.name;
     tile.append(img,caption);fragment.append(tile);
   });
   el('film').replaceChildren(fragment);el('count').textContent=photos.length+' 张照片';tree.setPhotos(photos);

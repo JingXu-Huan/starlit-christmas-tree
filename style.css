@@ -68,3 +68,12 @@ dialog{background:#11141e;border-color:#5c584f}
 #viewer.closing::backdrop{animation:backdrop-out .24s ease-in forwards}
 @keyframes backdrop-out{from{opacity:1}to{opacity:0}}
 @media(prefers-reduced-motion:reduce){#viewer.closing::backdrop{animation:none}}
+
+/* Photo flight: while a photo flies in, the dialog box itself stays put
+   and its contents stay hidden, so only the framed clone moves. The
+   appear animation must not run here: it would fade the clone with it. */
+#viewer.flying[open]{animation:none}
+#viewer.flying .dialog-head,#viewer.flying .photo-frame,#viewer.flying .photo-foot,#viewer.flying .viewer-strip,#viewer.flying .viewer-glow{opacity:0}
+.fly-photo{position:fixed;z-index:60;padding:4px;background:#f0f2f5;border-radius:3px;box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 0 1px #b7d3fa;pointer-events:none;will-change:transform,opacity}
+.fly-photo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:1px}
+@media(prefers-reduced-motion:reduce){.fly-photo{display:none}}
