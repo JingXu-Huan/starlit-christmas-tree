@@ -156,6 +156,7 @@ uniform float uTime;
 uniform float uPulse;
 uniform float uIntro;
 uniform float uGather;
+uniform float uBurst;
 varying vec3 vColor;
 varying float vBrightness;
 void main() {
@@ -212,9 +213,25 @@ void main() {
     x = pos.x; y = pos.y;
     brightness *= 1.0 + uGather * 0.55;
   }
+  // Burst: after a gather, opening the palm throws the particles outward
+  // past the tree outline, then they settle back into the tree as the
+  // burst decays and the gather mix releases. Each particle flies in a
+  // fixed pseudo-random direction plus a radial push from the ball centre,
+  // so the burst reads as an explosion, not a uniform scale-up. The push
+  // grows as the gather releases, so it peaks mid-expansion, not while
+  // the ball is still fully gathered.
+  if (uBurst > 0.001 && (aKind < 2.5 || aKind > 3.5)) {
+    vec2 dir = vec2(cos(aPhase*17.0), sin(aPhase*13.0));
+    vec2 radial = vec2(x, y) - vec2(0.0, 0.45);
+    float rl = length(radial);
+    if (rl > 0.001) dir += (radial / rl) * 0.7;
+    float push = uBurst * 0.22 * (0.35 + 0.65 * (1.0 - uGather));
+    x += dir.x * push; y += dir.y * push;
+    brightness *= 1.0 + uBurst * 1.1;
+  }
   vec2 screen=(uOrigin+uScale*vec2(x,y))/uViewport;
   gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0.0,1.0);
-  gl_PointSize=max(1.7*uRatio,aSize*uScale*uRatio*(2.65+2.9*crown)*(0.45+0.55*uIntro)*(1.0+uGather*0.3));
+  gl_PointSize=max(1.7*uRatio,aSize*uScale*uRatio*(2.65+2.9*crown)*(0.45+0.55*uIntro)*(1.0+uGather*0.3)*(1.0+uBurst*0.4));
   vColor=mix(aColor,vec3(1.0),crown*0.78);
   vBrightness=brightness*shimmer*(1.0+0.87*crown);
 }`;
@@ -255,14 +272,14 @@ function createGPU(canvas, cloud) {
     const loc=gl.getAttribLocation(program,name);
     gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,components,gl.FLOAT,false,STRIDE*4,offset*4);
   }
-  const [viewport,origin,rotation,scale,ratio,time,pulse,intro,gather] = ['uViewport','uOrigin','uRotation','uScale','uRatio','uTime','uPulse','uIntro','uGather'].map(n=>gl.getUniformLocation(program,n));
+  const [viewport,origin,rotation,scale,ratio,time,pulse,intro,gather,burst] = ['uViewport','uOrigin','uRotation','uScale','uRatio','uTime','uPulse','uIntro','uGather','uBurst'].map(n=>gl.getUniformLocation(program,n));
   gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.clearColor(0,0,0,0);
   return {
-    draw(view, sn, cs, t, pulseValue, introValue, gatherValue = 0) {
+    draw(view, sn, cs, t, pulseValue, introValue, gatherValue = 0, burstValue = 0) {
       gl.viewport(0,0,canvas.width,canvas.height); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform2f(viewport,view.w,view.h); gl.uniform2f(origin,view.x,view.y);
       gl.uniform2f(rotation,sn,cs); gl.uniform1f(scale,view.s); gl.uniform1f(ratio,view.dpr);
-      gl.uniform1f(time,t); gl.uniform1f(pulse,pulseValue); gl.uniform1f(intro,introValue); gl.uniform1f(gather,gatherValue);
+      gl.uniform1f(time,t); gl.uniform1f(pulse,pulseValue); gl.uniform1f(intro,introValue); gl.uniform1f(gather,gatherValue); gl.uniform1f(burst,burstValue);
       gl.drawArrays(gl.POINTS,0,cloud.length/STRIDE);
     },
     destroy() { gl.deleteBuffer(buffer); gl.deleteProgram(program); }
@@ -288,7 +305,7 @@ function makeFallback(cloud) {
     const shade=kind===2?13+Math.floor(cloud[i+8]*.435):Math.min(12,Math.max(0,Math.round((cloud[i+4]-.26)/.74*12)));
     points.push({x:cloud[i],y:cloud[i+1],z:cloud[i+2],s:cloud[i+3],b:cloud[i+7],phase:cloud[i+8],kind,sprite:sprites[shade]});
   }
-  return (c,view,sn,cs,t,pulseValue=0,introValue=1,gatherValue=0)=>{
+  return (c,view,sn,cs,t,pulseValue=0,introValue=1,gatherValue=0,burstValue=0)=>{
     c.globalCompositeOperation='lighter';
     for(const p of points) {
       let x=p.x*cs+p.z*sn;
@@ -319,8 +336,17 @@ function makeFallback(cloud) {
         x = x + (gx - x) * gatherValue; y = y + (gy - y) * gatherValue;
         a *= 1 + gatherValue * 0.55;
       }
+      // Same burst as the WebGL shader: outward push plus a flash.
+      if (burstValue > 0.001 && p.kind !== 3) {
+        let dirX = Math.cos(p.phase*17.0), dirY = Math.sin(p.phase*13.0);
+        const rx = x, ry = y - 0.45, rl = Math.hypot(rx, ry);
+        if (rl > 0.001) { dirX += (rx/rl)*0.7; dirY += (ry/rl)*0.7; }
+        const push = burstValue * 0.22 * (0.35 + 0.65*(1-gatherValue));
+        x += dirX*push; y += dirY*push;
+        a *= 1 + burstValue * 1.1;
+      }
       const crown=p.kind===0?Math.max(0,1-p.y/.7):0;
-      const r=Math.max(1.1,p.s*view.s*(1.95+crown*.90)*(1+gatherValue*0.3));
+      const r=Math.max(1.1,p.s*view.s*(1.95+crown*.90)*(1+gatherValue*0.3)*(1+burstValue*0.4));
       a*=1+crown*.66;
       c.globalAlpha=Math.min(.98,a*1.18);c.drawImage(p.sprite,view.x+x*view.s-r,view.y+y*view.s-r,r*2,r*2);
     }
@@ -391,7 +417,7 @@ export function createTree(canvas,{onSelect}={}) {
   let view={w:0,h:0,x:0,y:0,s:0,dpr:1}, photos=[], hits=[], angle=0, target=0;
   let drag=null, frame=0, last=0, animationTime=0, stopped=false, pauseOrbitUntil=0;
   let pulseValue=0, startedAt=0, parallax=0, parallaxTarget=0;
-  let gatherValue=0, gatherTarget=0;
+  let gatherValue=0, gatherTarget=0, burstValue=0;
   const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');
   function resize() {
     const {width:w,height:h}=canvas.getBoundingClientRect();
@@ -460,6 +486,9 @@ export function createTree(canvas,{onSelect}={}) {
     const intro = reducedMotion?.matches ? 1 : Math.min(1, (now - startedAt) / 1400);
     const easedIntro = 1 - Math.pow(1 - intro, 3);
     pulseValue *= Math.exp(-2.6 * dt);
+    // The burst flash decays in about a second; reduced motion skips it.
+    burstValue = reducedMotion?.matches ? 0 : burstValue * Math.exp(-3.2 * dt);
+    if (burstValue < 0.005) burstValue = 0;
     // Gathering is deliberately slow (about 2-3 s to a full ball) so a
     // brief fist that only closes a photo does not collapse the tree;
     // expanding back is quicker. Reduced motion snaps instead of easing.
@@ -471,14 +500,16 @@ export function createTree(canvas,{onSelect}={}) {
     }
     parallax += (parallaxTarget - parallax) * (1 - Math.exp(-6 * dt));
     const originX = view.x + parallax;
-    angle+=(target-angle)*(1-Math.exp(-14*dt));
+    // 24/s instead of 14/s: the old smoothing lagged visibly behind a
+    // moving palm, which is what "not following the hand" felt like.
+    angle+=(target-angle)*(1-Math.exp(-24*dt));
     const sn=Math.sin(angle),cs=Math.cos(angle);
     ctx.setTransform(view.dpr,0,0,view.dpr,0,0);
     ctx.clearRect(0,0,view.w,view.h);
     const shiftedView = {...view, x: originX};
-    if(gpu) gpu.draw(shiftedView,sn,cs,animationTime,pulseValue,easedIntro,gatherValue);
-    else fallback(ctx,shiftedView,sn,cs,animationTime,pulseValue,easedIntro,gatherValue);
-    const glowSize=view.s*(.236+.010*Math.sin(animationTime*1.4))*(1+pulseValue*.35);
+    if(gpu) gpu.draw(shiftedView,sn,cs,animationTime,pulseValue,easedIntro,gatherValue,burstValue);
+    else fallback(ctx,shiftedView,sn,cs,animationTime,pulseValue,easedIntro,gatherValue,burstValue);
+    const glowSize=view.s*(.236+.010*Math.sin(animationTime*1.4))*(1+pulseValue*.35)*(1+burstValue*.5);
     ctx.drawImage(heartGlow,originX-glowSize*.5,view.y-view.s*.06-glowSize*.5,glowSize,glowSize);
     const groundW=view.s*1.06, groundH=view.s*.20;
     ctx.drawImage(groundGlow,originX-groundW*.5,view.y+view.s*1.01-groundH*.5,groundW,groundH);
@@ -487,11 +518,20 @@ export function createTree(canvas,{onSelect}={}) {
 
   function pulse(strength=1) { pulseValue = Math.max(pulseValue, Math.min(1, strength)); }
 
-  function setGather(on) { gatherTarget = on ? 1 : 0; }
+  function burst() {
+    // Only a real gather bursts: a palm that was never gathered must
+    // not explode the tree on every ordinary rotation.
+    if (gatherValue > 0.35 && !reducedMotion?.matches) burstValue = 1;
+  }
+
+  function setGather(on) {
+    if (!on) burst();
+    gatherTarget = on ? 1 : 0;
+  }
 
   function rotate(delta) {
     if(!Number.isFinite(delta)) return;
-    target+=delta; pauseOrbitUntil=performance.now()+2000;
+    target+=delta; pauseOrbitUntil=performance.now()+1000;
     // Turning lights the tree up a little, so a gesture visibly answers.
     pulseValue=Math.max(pulseValue,Math.min(0.25,Math.abs(delta)*0.6));
   }
@@ -542,7 +582,7 @@ export function createTree(canvas,{onSelect}={}) {
   canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);
   canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
   const observer=new ResizeObserver(resize);observer.observe(canvas);resize();frame=requestAnimationFrame(draw);
-  return {setPhotos,rotate,pulse,setGather,photoHit,destroy() {
+  return {setPhotos,rotate,pulse,setGather,burst,photoHit,destroy() {
     stopped=true;cancelAnimationFrame(frame);observer.disconnect();gpu?.destroy();stage.remove();
     canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);
     canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up);

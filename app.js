@@ -282,16 +282,17 @@ function drawHandPreview(frame){
   }
   // Pinch line between thumb tip and index tip, gold while pinched.
   const [tx,ty]=point(4),[ix,iy]=point(8);
-  ctx.strokeStyle=frame.pinchGap<0.34?'#ffd98a':'rgba(255,255,255,.75)';ctx.lineWidth=2.5;ctx.setLineDash([4,3]);
+  ctx.strokeStyle=frame.pinchGap<0.36?'#ffd98a':'rgba(255,255,255,.75)';ctx.lineWidth=2.5;ctx.setLineDash([4,3]);
   ctx.beginPath();ctx.moveTo(tx,ty);ctx.lineTo(ix,iy);ctx.stroke();ctx.setLineDash([]);
-  const meter=Math.max(0,Math.min(100,(0.62-frame.pinchGap)/0.30*100));
+  const meter=Math.max(0,Math.min(100,(0.60-frame.pinchGap)/0.28*100));
   el('pinchMeter').style.width=meter+'%';
-  el('handHint').textContent=frame.distance==='far'?'手靠近一点':frame.distance==='near'?'手远一点':frame.fist?'已握拳':frame.pinchGap<0.34?'捏合中…':'已识别手掌';
+  el('handHint').textContent=frame.distance==='far'?'手靠近一点':frame.distance==='near'?'手远一点':frame.fist?'已握拳':frame.pinchGap<0.36?'捏合中…':'已识别手掌';
 }
 let cameraRequest=0;
 function cameraState(on){cameraOn=on;el('handPreview').hidden=!on;el('camera').querySelector('span').textContent=on?'关闭摄像头':'开启摄像头';scene.classList.toggle('active',on)}
 const gestures=createGestures({
   onDoublePinch(){tree.pulse(1);if(!guide.open){if(viewer.open)cycle();else showPhoto(selected)}},
+  onFirstPinch(){tree.pulse(.35)},
   onFist(){tree.pulse(.6);if(viewer.open){closeViewer();tree.setGather(true)}},
   onPose(pose){
     // Gathering only applies when no photo is open: a fist held while a

@@ -25,7 +25,7 @@ function smoothLandmarks(previous, current, alpha) {
   }));
 }
 
-export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onStatus, onFrame, onPose }) {
+export function createGestureInterpreter({ onDoublePinch, onFirstPinch, onFist, onRotate, onStatus, onFrame, onPose }) {
   let lastStatus;
   let lastSeen = -Infinity;
   let firstPinch, candidateSince, fistSince, palmX, lastPalmX;
@@ -55,7 +55,7 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
   return function process(result, now, aspect = 1) {
     const image = result.landmarks?.[0];
     if (!image) {
-      if (now - lastSeen > 300) {
+      if (now - lastSeen > 450) {
         reset();
         status('等待手掌进入画面');
         emitPose('absent');
@@ -64,7 +64,13 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
       return;
     }
     absentSent = false;
-    if (now - lastSeen > 300) reset();
+    // A brief tracking flicker (up to 0.45 s) must not kill a double
+    // pinch in progress: keep the first pinch if it is still in window.
+    if (now - lastSeen > 450) {
+      const keptFirstPinch = firstPinch;
+      reset();
+      if (keptFirstPinch !== null && now - keptFirstPinch <= 1600) firstPinch = keptFirstPinch;
+    }
     lastSeen = now;
     // World coordinates are metric and preserve proportions as the hand turns.
     const rawWorld = result.worldLandmarks?.[0] ?? image.map(v => ({
@@ -96,7 +102,11 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
       distance: scale < 0.055 ? 'far' : scale > 0.115 ? 'near' : 'ok',
     });
 
-    if (fist) {
+    // A pinch also folds the index finger, so a hand doing a double
+    // pinch can read as a fist and steal the pinch: when thumb and index
+    // are actually touching, it is a pinch, not a fist. Only a fist with
+    // the fingertips apart takes the fist path below.
+    if (fist && pinchGap > 0.30) {
       palmX = lastPalmX = candidateSince = null;
       fistSince ??= now;
       // Same hold as the fist action: a passing folded hand does not gather.
@@ -120,13 +130,16 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
     // The window for the second pinch is 1.6s: a deliberately slow double
     // pinch was previously expiring before the second close.
     if (firstPinch !== null && now - firstPinch > 1600) firstPinch = null;
-    // Closing at 0.34 and opening at 0.48 instead of 0.31/0.53: a pinch
-    // no longer needs the fingertips to touch, and the release that
-    // separates two pinches is shorter.
-    const transition = pinched ? pinchGap > 0.48 : pinchGap < 0.34;
+    // Closing at 0.36 and opening at 0.44 instead of 0.34/0.48: the
+    // release between two pinches no longer needs the fingers fully
+    // apart, which was the common reason a second pinch never registered.
+    const transition = pinched ? pinchGap > 0.44 : pinchGap < 0.36;
     if (transition) {
       candidateSince ??= now;
-      if (now - candidateSince >= 18) {
+      // A deep pinch (fingertips firmly together) counts at once: the
+      // 12 ms hold exists only to reject tremor near the threshold.
+      if (pinchGap < 0.28) candidateSince = Math.min(candidateSince, now - 12);
+      if (now - candidateSince >= 12) {
         candidateSince = null;
         pinched = !pinched;
         if (pinched && now >= cooldownUntil) {
@@ -137,6 +150,9 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
             onDoublePinch?.();
           } else {
             firstPinch = now;
+            // Visible feedback that the first pinch landed, so the user
+            // knows the second one is what is being waited for.
+            onFirstPinch?.();
           }
         }
       }
@@ -157,12 +173,14 @@ export function createGestureInterpreter({ onDoublePinch, onFist, onRotate, onSt
     // dropped rotation whenever the little finger curled slightly.
     if (extended.filter(Boolean).length >= 3 && !pinched && pinchGap > 0.44) {
       emitPose('palm');
-      // A front-facing camera shows mirrored movement to the person using it.
-      const x = 1 - (smoothImage[0].x + smoothImage[9].x + smoothImage[5].x + smoothImage[17].x) / 4;
-      palmX = palmX === null ? x : palmX + (x - palmX) * 0.70;
-      if (lastPalmX !== null && Math.abs(palmX - lastPalmX) > 0.0008) {
+      // Follow the raw hand position, not the smoothed one: the smoothed
+      // landmarks lag a fast palm by a frame or two, and rotation built
+      // on them always felt a step behind the hand.
+      const x = 1 - (image[0].x + image[9].x + image[5].x + image[17].x) / 4;
+      palmX = palmX === null ? x : palmX + (x - palmX) * 0.85;
+      if (lastPalmX !== null && Math.abs(palmX - lastPalmX) > 0.0005) {
         const movement = Math.max(-0.11, Math.min(0.11, palmX - lastPalmX));
-        onRotate?.(movement * 7);
+        onRotate?.(movement * 9);
         lastPalmX = palmX;
       }
       lastPalmX ??= palmX;
@@ -309,7 +327,7 @@ export function createGestures(handlers = {}) {
       stream.getVideoTracks()[0]?.addEventListener('ended',
         () => fail(session, '摄像头连接已断开，请重新开启。'), { once: true });
       const process = createGestureInterpreter(handlers);
-      let lastVideoTime = -1, lastFrame = -Infinity, frameInterval = 26;
+      let lastVideoTime = -1, lastFrame = -Infinity, frameInterval = 20;
       async function useMainThread() {
         session.worker?.close();
         session.worker = null;
